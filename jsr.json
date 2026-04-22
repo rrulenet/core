@@ -1,0 +1,23 @@
+{
+  "$schema": "https://jsr.io/schema/config-file.v1.json",
+  "name": "@rrulenet/core",
+  "version": "0.1.0",
+  "exports": {
+    ".": "./src/index.ts",
+    "./engine": "./src/engine.ts",
+    "./options": "./src/options.ts",
+    "./rule": "./src/rule.ts",
+    "./text": "./src/text.ts",
+    "./time": "./src/time.ts"
+  },
+  "exclude": [
+    ".github/",
+    "dist/",
+    "tsconfig.json",
+    "test/",
+    "scripts/",
+    "badges/",
+    "coverage-output.txt",
+    "node_modules/"
+  ]
+}

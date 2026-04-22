@@ -10,6 +10,7 @@ on:
       - 'test/**'
       - 'README.md'
       - 'package.json'
+      - 'package-lock.json'
       - 'tsconfig.json'
       - 'scripts/write-coverage-badge.mjs'
       - '.github/workflows/coverage-badge.yml'

@@ -59,7 +59,7 @@
   "scripts": {
     "build": "npm exec --package=tsdown --package=typescript -- tsdown --config tsdown.config.ts",
     "test": "npm run build && node --test test/**/*.test.js",
-    "coverage": "npm run build && node --experimental-test-coverage --test-coverage-include=dist/**/*.mjs --test test/**/*.test.js",
+    "coverage": "npm run build && node --experimental-test-coverage --test-concurrency=1 --test-coverage-include=dist/**/*.mjs --test test/**/*.test.js",
     "coverage:badge": "node scripts/write-coverage-badge.mjs coverage-output.txt badges/coverage.json",
     "typecheck": "tsc -p tsconfig.json"
   },

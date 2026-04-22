@@ -35,14 +35,14 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       - name: Install dependencies
         run: npm ci
 
       - name: Run coverage
-        run: npm run coverage > coverage-output.txt 2>&1
+        run: npm run coverage | tee coverage-output.txt
 
       - name: Generate badge payload
         run: npm run coverage:badge

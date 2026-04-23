@@ -93,6 +93,9 @@ function formatList(values: unknown[]) {
   return values.map((value) => String(value)).join(',');
 }
 
+/**
+ * Serialize compat-style rule options back into RFC-like string form.
+ */
 export function optionsToString(options: Partial<Options>): string {
   const rrule: string[][] = [];
   let dtstart = '';

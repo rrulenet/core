@@ -1,5 +1,8 @@
 import type { Weekday, WeekdayStr } from './weekday.ts';
 
+/**
+ * Classic query interface shared with the compat-style APIs.
+ */
 export interface QueryMethods {
   all(iterator?: (date: Date, index: number) => boolean): Date[];
   between(after: Date, before: Date, inc?: boolean, iterator?: (date: Date, index: number) => boolean): Date[];
@@ -7,6 +10,9 @@ export interface QueryMethods {
   after(date: Date, inc?: boolean): Date | null;
 }
 
+/**
+ * Classic frequency enum used by compat-style rule options.
+ */
 export enum Frequency {
   YEARLY = 0,
   MONTHLY = 1,
@@ -17,10 +23,22 @@ export enum Frequency {
   SECONDLY = 6,
 }
 
+/**
+ * Weekday selector accepted by compat-style rule options.
+ */
 export type ByWeekday = WeekdayStr | number | Weekday;
+/**
+ * Month selector accepted by compat-style rule options.
+ */
 export type ByMonth = number | string;
+/**
+ * RFC 7529 skip behavior accepted by compat-style rule options.
+ */
 export type Skip = 'OMIT' | 'BACKWARD' | 'FORWARD';
 
+/**
+ * Compat-style rule option shape accepted by normalization helpers.
+ */
 export interface Options {
   freq: Frequency;
   dtstart: Date | null;

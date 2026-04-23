@@ -1,6 +1,9 @@
 import { Temporal } from 'temporal-polyfill';
 import type { TextMergeDescriptor, ToTextOptions } from './text.ts';
 
+/**
+ * Supported recurrence frequencies in the low-level rule engine.
+ */
 export type RuleFrequency =
   | 'YEARLY'
   | 'MONTHLY'
@@ -10,13 +13,22 @@ export type RuleFrequency =
   | 'MINUTELY'
   | 'SECONDLY';
 
+/**
+ * Normalized weekday selector used by the low-level rule specification.
+ */
 export interface ByWeekdaySpec {
   weekday: number;
   ordinal?: number;
 }
 
+/**
+ * Normalized month selector used by the low-level rule specification.
+ */
 export type ByMonthSpec = number | string;
 
+/**
+ * Engine-ready normalized recurrence rule specification.
+ */
 export interface RuleSpec {
   freq: RuleFrequency;
   dtstart: Temporal.ZonedDateTime;
@@ -39,6 +51,9 @@ export interface RuleSpec {
   skip?: 'OMIT' | 'BACKWARD' | 'FORWARD';
 }
 
+/**
+ * Query interface implemented by concrete recurrence sources.
+ */
 export interface SourceQuery {
   between(after: Temporal.Instant, before: Temporal.Instant, inc: boolean): Temporal.ZonedDateTime[];
   after(after: Temporal.Instant, inc: boolean): Temporal.ZonedDateTime | null;

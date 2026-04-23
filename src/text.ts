@@ -1,3 +1,11 @@
+/**
+ * Text rendering helpers for rules and set expressions.
+ *
+ * This entrypoint contains the locale registry and the low-level helpers used
+ * to describe recurrence rules and composed schedules in natural language.
+ *
+ * @module
+ */
 export {
   describeSetExpression,
   getToTextLocale,

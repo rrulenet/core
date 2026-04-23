@@ -4,6 +4,9 @@ import type { SourceQuery } from './spec.ts';
 import { compareByInstant } from './temporal.ts';
 import { getToTextLocale, type TextMergeDescriptor, type ToTextOptions } from './text.ts';
 
+/**
+ * A concrete source backed by explicit occurrence dates.
+ */
 export class DateSource implements SourceQuery {
   constructor(private readonly dates: Temporal.ZonedDateTime[]) {}
 

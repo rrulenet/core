@@ -86,6 +86,10 @@ function normalizeDateLike(date: Date | null, tzid: string): Temporal.ZonedDateT
   return dateToZdt(date, tzid);
 }
 
+/**
+ * Optional Temporal values that can be supplied directly when building a
+ * normalized rule specification.
+ */
 export type ResolvedTemporalOptions = {
   tzid?: string;
   dtstart?: Temporal.ZonedDateTime;
@@ -97,6 +101,9 @@ function normalizeByEaster(value: number | null): number | undefined {
   return Number.isInteger(value) ? value : undefined;
 }
 
+/**
+ * Normalize compat-style rule options and apply engine defaults.
+ */
 export function normalizeOptions(input: Partial<Options>): Options {
   if (input.skip && !input.rscale) {
     throw new Error('SKIP MUST NOT be present unless RSCALE is present');
@@ -142,6 +149,10 @@ export function normalizeOptions(input: Partial<Options>): Options {
   };
 }
 
+/**
+ * Build an engine-ready rule specification from normalized compat options and
+ * optional pre-resolved Temporal values.
+ */
 export function buildRuleSpecFromResolvedTemporalOptions(
   options: Options,
   resolved: ResolvedTemporalOptions = {},
@@ -189,6 +200,9 @@ export function buildRuleSpecFromResolvedTemporalOptions(
   };
 }
 
+/**
+ * Build an engine-ready rule specification from normalized compat options.
+ */
 export function buildRuleSpec(options: Options): RuleSpec {
   return buildRuleSpecFromResolvedTemporalOptions(options);
 }

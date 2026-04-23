@@ -1,3 +1,11 @@
+/**
+ * Compat-oriented option types shared by the engine and adapters.
+ *
+ * This entrypoint exposes the option model, weekday helpers, and frequency
+ * enum used by the classic rule representation.
+ *
+ * @module
+ */
 export {
   Frequency,
   type ByMonth,

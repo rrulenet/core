@@ -3,6 +3,9 @@ import { Temporal } from 'temporal-polyfill';
 import { parseRuleString } from './internal/parse.ts';
 import type { Options } from './internal/options.ts';
 
+/**
+ * Options accepted by the low-level RFC string parser.
+ */
 export interface RRuleStrOptions {
   dtstart: Date | null;
   count: number | null;
@@ -25,6 +28,10 @@ const DEFAULT_OPTIONS: RRuleStrOptions = {
   tzid: null,
 };
 
+/**
+ * Structured result of parsing an RFC recurrence string into normalized
+ * components.
+ */
 export interface ParsedRRuleStringComponents {
   noCache: boolean;
   sawInlineDtstart: boolean;
@@ -130,6 +137,10 @@ function reinterpretExternalDtstartForTzid(date: Date, tzid: string): Date {
   return new Date(instant.epochMilliseconds);
 }
 
+/**
+ * Merge parsed rule values with externally supplied defaults such as
+ * `dtstart`, `tzid`, `count`, and `until`.
+ */
 export function groomRuleOptions(
   parsed: Partial<Options>,
   dtstart?: Date | null,
@@ -151,6 +162,10 @@ export function groomRuleOptions(
   };
 }
 
+/**
+ * Parse an RFC-style recurrence string into its rule, date, and timezone
+ * components without instantiating a higher-level facade object.
+ */
 export function parseRRuleStringComponents(
   input: string,
   rawOptions: Partial<RRuleStrOptions> = {},

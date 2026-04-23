@@ -33,6 +33,9 @@ function cloneLocaleDefinition(locale: ToTextLocaleDefinition): ToTextLocaleDefi
   };
 }
 
+/**
+ * Resolve a text locale definition by exact or base locale code.
+ */
 export function getToTextLocale(locale = 'en'): ToTextLocaleDefinition {
   const exact = localeRegistry.get(normalizeLocaleKey(locale));
   if (exact) return cloneLocaleDefinition(exact);
@@ -44,10 +47,16 @@ export function getToTextLocale(locale = 'en'): ToTextLocaleDefinition {
   return cloneLocaleDefinition(EN_LOCALE);
 }
 
+/**
+ * List the currently registered text locale codes.
+ */
 export function listToTextLocales(): string[] {
   return [...localeRegistry.keys()].sort();
 }
 
+/**
+ * Register or extend a text locale definition.
+ */
 export function registerToTextLocale(
   locale: string,
   overrides: Partial<ToTextLocaleDefinition>,
@@ -64,6 +73,9 @@ export function registerToTextLocale(
   return cloneLocaleDefinition(next);
 }
 
+/**
+ * Resolve the concrete locale implementation used for text rendering.
+ */
 export function resolveLocale(textOptions: ToTextOptions = {}): ResolvedTextLocale {
   const code = normalizeLocaleKey(textOptions.locale);
   return {

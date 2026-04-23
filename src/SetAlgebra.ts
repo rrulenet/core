@@ -13,6 +13,10 @@ type TextQueryMethods = QueryMethods & {
   isFullyConvertibleToText?: (options?: ToTextOptions) => boolean;
 };
 
+/**
+ * Adapts classic `QueryMethods` sources into the low-level `SourceQuery`
+ * interface used by the engine.
+ */
 export class QueryMethodsSource implements SourceQuery {
   constructor(private readonly query: QueryMethods) {}
 
@@ -58,13 +62,25 @@ function toExpression(operand: SetOperand): SetExpression {
     : { kind: 'source', source: new QueryMethodsSource(operand) };
 }
 
+/**
+ * Composes recurrence-producing sources with set algebra operations.
+ *
+ * `SetAlgebra` is the low-level composition layer behind unions,
+ * intersections, and differences of recurrence-producing sources.
+ */
 export class SetAlgebra implements QueryMethods {
   constructor(private readonly expression: SetExpression) {}
 
+  /**
+   * Wrap a compat-style source so it can participate in set algebra.
+   */
   static from(source: QueryMethods): SetAlgebra {
     return new SetAlgebra({ kind: 'source', source: new QueryMethodsSource(source) });
   }
 
+  /**
+   * Build a set operand from explicit dates interpreted in the given timezone.
+   */
   static dates(dates: Date[], tzid = 'UTC'): SetAlgebra {
     const values = dates.map((date) => {
       if (!isValidDate(date)) throw new Error('Invalid date');
@@ -73,14 +89,23 @@ export class SetAlgebra implements QueryMethods {
     return new SetAlgebra({ kind: 'source', source: new DateSource(values) });
   }
 
+  /**
+   * Create the union of multiple set operands.
+   */
   static union(...operands: SetOperand[]): SetAlgebra {
     return new SetAlgebra({ kind: 'union', expressions: operands.map(toExpression) });
   }
 
+  /**
+   * Create the intersection of multiple set operands.
+   */
   static intersection(...operands: SetOperand[]): SetAlgebra {
     return new SetAlgebra({ kind: 'intersection', expressions: operands.map(toExpression) });
   }
 
+  /**
+   * Subtract one set operand from another.
+   */
   static difference(include: SetOperand, exclude: SetOperand): SetAlgebra {
     return new SetAlgebra({
       kind: 'difference',
@@ -130,6 +155,9 @@ export class SetAlgebra implements QueryMethods {
     return isSetExpressionFullyConvertible(this.expression, options);
   }
 
+  /**
+   * Expose the underlying engine expression.
+   */
   getExpression(): SetExpression {
     return this.expression;
   }

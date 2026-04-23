@@ -3,6 +3,9 @@ import { Temporal } from 'temporal-polyfill';
 import type { SourceQuery } from './spec.ts';
 import { compareByInstant, dedupeByInstant } from './temporal.ts';
 
+/**
+ * Recursive set-expression tree used by the low-level engine.
+ */
 export type SetExpression =
   | { kind: 'source'; source: SourceQuery }
   | { kind: 'union'; expressions: SetExpression[] }
@@ -32,6 +35,9 @@ function evaluateAll(expression: SetExpression): Temporal.ZonedDateTime[] {
   }
 }
 
+/**
+ * Evaluates set expressions and exposes query methods over their occurrences.
+ */
 export class SetEngine {
   private allCache: Temporal.ZonedDateTime[] | null = null;
 

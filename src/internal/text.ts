@@ -28,6 +28,10 @@ function isWeekdayLike(value: unknown): value is WeekdayLike {
     && typeof (value as { toString?: unknown }).toString === 'function';
 }
 
+/**
+ * Merge metadata used to collapse similar text fragments when describing
+ * unions of rules.
+ */
 export interface TextMergeDescriptor {
   key: string;
   weekdays: string[];
@@ -301,6 +305,9 @@ function normalizeWeekdayTokens(values: WeekdayValue[], locale: ResolvedTextLoca
     .sort((a, b) => a.localeCompare(b, locale.intl));
 }
 
+/**
+ * Build merge metadata for a single rule option set when possible.
+ */
 export function textMergeDescriptorForOptions(options: Options, textOptions: ToTextOptions = {}): TextMergeDescriptor | null {
   const locale = resolveLocale(textOptions);
   const weekdayValues = asArray(options.byweekday).map(parseWeekday).filter(Boolean) as WeekdayValue[];
@@ -405,6 +412,9 @@ function describeUnion(expressions: SetExpression[], options: ToTextOptions | un
   return joinList(otherText, locale.conjunction, locale.intl);
 }
 
+/**
+ * Render a recurrence set expression as human-readable text.
+ */
 export function describeSetExpression(expression: SetExpression, options?: ToTextOptions, context: RenderContext = 'standalone'): string {
   const locale = resolveLocale(options);
   switch (expression.kind) {
@@ -434,6 +444,10 @@ export function describeSetExpression(expression: SetExpression, options?: ToTex
   }
 }
 
+/**
+ * Report whether a set expression can be fully converted to text without
+ * structural fallbacks.
+ */
 export function isSetExpressionFullyConvertible(expression: SetExpression, options?: ToTextOptions): boolean {
   switch (expression.kind) {
     case 'source':
@@ -448,14 +462,23 @@ export function isSetExpressionFullyConvertible(expression: SetExpression, optio
   }
 }
 
+/**
+ * Render a single normalized rule as human-readable text.
+ */
 export function ruleToText(options: Options, textOptions?: ToTextOptions): string {
   return analyzeOptions(options, textOptions).text;
 }
 
+/**
+ * Report whether a single normalized rule can be fully converted to text.
+ */
 export function isFullyConvertibleToText(options: Options, textOptions?: ToTextOptions): boolean {
   return analyzeOptions(options, textOptions).fullyConvertible;
 }
 
+/**
+ * Render the stable non-weekday portion of a rule for merge operations.
+ */
 export function textMergeDescriptorForRuleBase(options: Options, textOptions?: ToTextOptions): string {
   return describeRuleBaseWithoutWeekdays(options, textOptions);
 }

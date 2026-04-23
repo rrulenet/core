@@ -1,3 +1,11 @@
+/**
+ * Rule normalization, parsing, and serialization helpers.
+ *
+ * This entrypoint exposes the low-level functions that turn compat-style rule
+ * options into engine-ready specifications and back into RFC strings.
+ *
+ * @module
+ */
 export {
   buildRuleSpec,
   buildRuleSpecFromResolvedTemporalOptions,

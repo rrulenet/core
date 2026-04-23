@@ -94,6 +94,9 @@ function parseDtstartToken(token: string, result: Partial<Options>) {
   return true;
 }
 
+/**
+ * Parse a single RFC-style rule string into compat-style options.
+ */
 export function parseRuleString(input: string): Partial<Options> {
   const result: Partial<Options> = {};
   for (const line of unfoldLines(input)) {

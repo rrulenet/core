@@ -13,6 +13,9 @@
   "exclude": [
     ".github/",
     "dist/",
+    "package-lock.json",
+    "package.json",
+    "tsdown.config.ts",
     "tsconfig.json",
     "test/",
     "scripts/",

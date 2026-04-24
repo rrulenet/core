@@ -35,6 +35,88 @@ function evaluateAll(expression: SetExpression): Temporal.ZonedDateTime[] {
   }
 }
 
+function evaluateBetween(expression: SetExpression, after: Temporal.Instant, before: Temporal.Instant, inc: boolean): Temporal.ZonedDateTime[] {
+  switch (expression.kind) {
+    case 'source':
+      return expression.source.between(after, before, inc);
+    case 'union':
+      return dedupeByInstant(expression.expressions.flatMap((entry) => evaluateBetween(entry, after, before, inc))).sort(compareByInstant);
+    case 'intersection': {
+      if (!expression.expressions.length) return [];
+      const [first, ...rest] = expression.expressions;
+      return evaluateBetween(first, after, before, inc).filter((value) => {
+        const instant = value.toInstant();
+        return rest.every((entry) => evaluateBetween(entry, instant, instant, true).some((candidate) => Temporal.Instant.compare(candidate.toInstant(), instant) === 0));
+      });
+    }
+    case 'difference': {
+      const excluded = new Set(
+        evaluateBetween(expression.exclude, after, before, true)
+          .map((value) => value.toInstant().epochNanoseconds.toString()),
+      );
+      return evaluateBetween(expression.include, after, before, inc)
+        .filter((value) => !excluded.has(value.toInstant().epochNanoseconds.toString()));
+    }
+  }
+}
+
+function evaluateAfter(expression: SetExpression, after: Temporal.Instant, inc: boolean): Temporal.ZonedDateTime | null {
+  switch (expression.kind) {
+    case 'source':
+      return expression.source.after(after, inc);
+    case 'union': {
+      const candidates = expression.expressions
+        .map((entry) => evaluateAfter(entry, after, inc))
+        .filter((value): value is Temporal.ZonedDateTime => value !== null);
+      candidates.sort(compareByInstant);
+      return candidates[0] ?? null;
+    }
+    case 'difference': {
+      let cursor = after;
+      let inclusive = inc;
+      let safety = 0;
+      while (safety < 10_000) {
+        safety += 1;
+        const candidate = evaluateAfter(expression.include, cursor, inclusive);
+        if (!candidate) return null;
+        const instant = candidate.toInstant();
+        const excluded = evaluateBetween(expression.exclude, instant, instant, true)
+          .some((value) => Temporal.Instant.compare(value.toInstant(), instant) === 0);
+        if (!excluded) return candidate;
+        cursor = instant;
+        inclusive = false;
+      }
+      return null;
+    }
+    default:
+      return evaluateAll(expression).find((value) => {
+        const cmp = Temporal.Instant.compare(value.toInstant(), after);
+        return inc ? cmp >= 0 : cmp > 0;
+      }) ?? null;
+  }
+}
+
+function evaluateBefore(expression: SetExpression, before: Temporal.Instant, inc: boolean): Temporal.ZonedDateTime | null {
+  switch (expression.kind) {
+    case 'source':
+      return expression.source.before(before, inc);
+    case 'union': {
+      const candidates = expression.expressions
+        .map((entry) => evaluateBefore(entry, before, inc))
+        .filter((value): value is Temporal.ZonedDateTime => value !== null);
+      candidates.sort(compareByInstant);
+      return candidates[candidates.length - 1] ?? null;
+    }
+    default: {
+      const values = evaluateAll(expression).filter((value) => {
+        const cmp = Temporal.Instant.compare(value.toInstant(), before);
+        return inc ? cmp <= 0 : cmp < 0;
+      });
+      return values[values.length - 1] ?? null;
+    }
+  }
+}
+
 /**
  * Evaluates set expressions and exposes query methods over their occurrences.
  */
@@ -50,26 +132,14 @@ export class SetEngine {
   }
 
   between(after: Temporal.Instant, before: Temporal.Instant, inc: boolean): Temporal.ZonedDateTime[] {
-    return this.all().filter((date) => {
-      const instant = date.toInstant();
-      const lower = inc ? Temporal.Instant.compare(instant, after) >= 0 : Temporal.Instant.compare(instant, after) > 0;
-      const upper = inc ? Temporal.Instant.compare(instant, before) <= 0 : Temporal.Instant.compare(instant, before) < 0;
-      return lower && upper;
-    });
+    return evaluateBetween(this.expression, after, before, inc);
   }
 
   after(after: Temporal.Instant, inc: boolean): Temporal.ZonedDateTime | null {
-    return this.all().find((value) => {
-      const cmp = Temporal.Instant.compare(value.toInstant(), after);
-      return inc ? cmp >= 0 : cmp > 0;
-    }) ?? null;
+    return evaluateAfter(this.expression, after, inc);
   }
 
   before(before: Temporal.Instant, inc: boolean): Temporal.ZonedDateTime | null {
-    const values = this.all().filter((value) => {
-      const cmp = Temporal.Instant.compare(value.toInstant(), before);
-      return inc ? cmp <= 0 : cmp < 0;
-    });
-    return values.length ? values[values.length - 1]! : null;
+    return evaluateBefore(this.expression, before, inc);
   }
 }

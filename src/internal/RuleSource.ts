@@ -661,24 +661,98 @@ function boundedSubdailyBetween(
 
   while (safety < 1_000_000) {
     safety += 1;
-    const instant = cursor.toInstant();
-    const lowerOk = inc ? Temporal.Instant.compare(instant, after) >= 0 : Temporal.Instant.compare(instant, after) > 0;
-    const upperOk = inc ? Temporal.Instant.compare(instant, before) <= 0 : Temporal.Instant.compare(instant, before) < 0;
+    const candidates = subdailyCandidatesForPeriod(cursor, spec);
+    let shouldStop = false;
 
-    if (!upperOk) break;
-    if (
-      lowerOk &&
-      Temporal.ZonedDateTime.compare(cursor, spec.dtstart) >= 0 &&
-      (!spec.until || Temporal.ZonedDateTime.compare(cursor, spec.until) <= 0) &&
-      matches(cursor, spec)
-    ) {
-      out.push(cursor);
+    for (const candidate of candidates) {
+      const instant = candidate.toInstant();
+      const lowerOk = inc ? Temporal.Instant.compare(instant, after) >= 0 : Temporal.Instant.compare(instant, after) > 0;
+      const upperOk = inc ? Temporal.Instant.compare(instant, before) <= 0 : Temporal.Instant.compare(instant, before) < 0;
+
+      if (!upperOk && Temporal.Instant.compare(instant, before) > 0) {
+        shouldStop = true;
+        break;
+      }
+      if (
+        lowerOk &&
+        upperOk &&
+        Temporal.ZonedDateTime.compare(candidate, spec.dtstart) >= 0 &&
+        (!spec.until || Temporal.ZonedDateTime.compare(candidate, spec.until) <= 0) &&
+        matches(candidate, spec) &&
+        matchesTimeSelectors(candidate, spec)
+      ) {
+        out.push(candidate);
+      }
+    }
+
+    if (shouldStop) break;
+    cursor = addByFreq(cursor, spec);
+  }
+
+  return dedupeByInstant(out);
+}
+
+function matchesTimeSelectors(date: Temporal.ZonedDateTime, spec: RuleSpec): boolean {
+  return (
+    (!spec.byhour?.length || spec.byhour.includes(date.hour)) &&
+    (!spec.byminute?.length || spec.byminute.includes(date.minute)) &&
+    (!spec.bysecond?.length || spec.bysecond.includes(date.second))
+  );
+}
+
+function subdailyCandidatesForPeriod(
+  cursor: Temporal.ZonedDateTime,
+  spec: RuleSpec,
+): Temporal.ZonedDateTime[] {
+  switch (spec.freq) {
+    case 'HOURLY': {
+      const minutes = spec.byminute ?? [cursor.minute];
+      const seconds = spec.bysecond ?? [cursor.second];
+      return minutes.flatMap((minute) => seconds.map((second) => cursor.with({ minute, second })));
+    }
+    case 'MINUTELY': {
+      const seconds = spec.bysecond ?? [cursor.second];
+      return seconds.map((second) => cursor.with({ second }));
+    }
+    case 'SECONDLY':
+      return [cursor];
+    default:
+      return [cursor];
+  }
+}
+
+function boundedSubdailyAfter(
+  spec: RuleSpec,
+  after: Temporal.Instant,
+  inc: boolean,
+): Temporal.ZonedDateTime | null {
+  const lower = after.toZonedDateTimeISO(spec.tzid);
+  let cursor = subdailyCursorNearLower(spec, lower);
+  let safety = 0;
+
+  while (safety < 1_000_000) {
+    safety += 1;
+    const candidates = subdailyCandidatesForPeriod(cursor, spec);
+    candidates.sort(compareByInstant);
+
+    for (const candidate of candidates) {
+      const cmp = Temporal.Instant.compare(candidate.toInstant(), after);
+      if (
+        (inc ? cmp >= 0 : cmp > 0) &&
+        Temporal.ZonedDateTime.compare(candidate, spec.dtstart) >= 0 &&
+        (!spec.until || Temporal.ZonedDateTime.compare(candidate, spec.until) <= 0) &&
+        matches(candidate, spec) &&
+        matchesTimeSelectors(candidate, spec)
+      ) {
+        return candidate;
+      }
+      if (spec.until && Temporal.ZonedDateTime.compare(candidate, spec.until) > 0) return null;
     }
 
     cursor = addByFreq(cursor, spec);
   }
 
-  return dedupeByInstant(out);
+  return null;
 }
 
 function periodLowerBound(cursor: Temporal.ZonedDateTime, spec: RuleSpec): Temporal.ZonedDateTime {
@@ -1399,6 +1473,9 @@ export class RuleSource implements SourceQuery {
   after(after: Temporal.Instant, inc: boolean): Temporal.ZonedDateTime | null {
     if (hasSimpleOpenEndedCadence(this.spec)) {
       return simpleCadenceAfter(this.spec, after, inc);
+    }
+    if (hasBoundedSubdailySearchCandidate(this.spec)) {
+      return boundedSubdailyAfter(this.spec, after, inc);
     }
     return this.all().find((date) => {
       const cmp = Temporal.Instant.compare(date.toInstant(), after);

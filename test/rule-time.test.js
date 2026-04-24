@@ -929,6 +929,30 @@ test('rule/time: between on unbounded daily rules works far after dtstart', () =
   );
 });
 
+test('rule/time: minutely bysecond seeks efficiently far after dtstart', () => {
+  const rule = RRule.fromString([
+    'DTSTART;TZID=UTC:20200101T000000',
+    'RRULE:FREQ=MINUTELY;BYSECOND=0',
+  ].join('\n'));
+  const after = new Date('2026-03-02T10:15:30.000Z');
+
+  assert.equal(
+    rule.after(after, false)?.toISOString(),
+    '2026-03-02T10:16:00.000Z',
+  );
+  assert.deepEqual(
+    rule
+      .between(after, new Date('2026-03-02T10:20:00.000Z'), false)
+      .map((value) => value.toISOString()),
+    [
+      '2026-03-02T10:16:00.000Z',
+      '2026-03-02T10:17:00.000Z',
+      '2026-03-02T10:18:00.000Z',
+      '2026-03-02T10:19:00.000Z',
+    ],
+  );
+});
+
 test('rule/time: between clips to count and returns empty past the last occurrence', () => {
   const rule = new RRule({
     freq: Frequency.DAILY,

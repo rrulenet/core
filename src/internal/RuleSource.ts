@@ -762,6 +762,10 @@ function boundedSubdailyAfter(
   after: Temporal.Instant,
   inc: boolean,
 ): Temporal.ZonedDateTime | null {
+  if (hasMinutelyWindowSearchCandidate(spec)) {
+    return minutelyWindowAfter(spec, after, inc);
+  }
+
   const lower = after.toZonedDateTimeISO(spec.tzid);
   let cursor = subdailyCursorNearLower(spec, lower);
   let safety = 0;
@@ -786,6 +790,80 @@ function boundedSubdailyAfter(
     }
 
     cursor = addByFreq(cursor, spec);
+  }
+
+  return null;
+}
+
+function hasMinutelyWindowSearchCandidate(spec: RuleSpec): boolean {
+  return (
+    spec.freq === 'MINUTELY' &&
+    spec.count === undefined &&
+    !spec.bysetpos?.length &&
+    Boolean(spec.byhour?.length)
+  );
+}
+
+function range(end: number): number[] {
+  return Array.from({ length: end }, (_, index) => index);
+}
+
+function minutelyWindowAfter(
+  spec: RuleSpec,
+  after: Temporal.Instant,
+  inc: boolean,
+): Temporal.ZonedDateTime | null {
+  const lower = after.toZonedDateTimeISO(spec.tzid);
+  const { hours: cachedHours, minutes: cachedMinutes, seconds: cachedSeconds } = sortedTimeParts(spec);
+  const hours = cachedHours ?? range(24);
+  const minutes = cachedMinutes ?? range(60);
+  const seconds = cachedSeconds ?? [spec.dtstart.second];
+  let day = lower.with({
+    hour: 0,
+    minute: 0,
+    second: spec.dtstart.second,
+    millisecond: spec.dtstart.millisecond,
+    microsecond: spec.dtstart.microsecond,
+    nanosecond: spec.dtstart.nanosecond,
+  });
+  let safety = 0;
+
+  while (safety < 10_000) {
+    safety += 1;
+
+    if (!matches(day, spec)) {
+      day = day.add({ days: 1 });
+      continue;
+    }
+
+    for (const hour of hours) {
+      for (const minute of minutes) {
+        for (const second of seconds) {
+          const candidate = day.with({
+            hour,
+            minute,
+            second,
+            millisecond: spec.dtstart.millisecond,
+            microsecond: spec.dtstart.microsecond,
+            nanosecond: spec.dtstart.nanosecond,
+          });
+          const cmp = Temporal.Instant.compare(candidate.toInstant(), after);
+
+          if (spec.until && Temporal.ZonedDateTime.compare(candidate, spec.until) > 0) return null;
+          if (
+            (inc ? cmp >= 0 : cmp > 0) &&
+            Temporal.ZonedDateTime.compare(candidate, spec.dtstart) >= 0 &&
+            isOnInterval(candidate, spec) &&
+            matches(candidate, spec) &&
+            matchesTimeSelectors(candidate, spec)
+          ) {
+            return candidate;
+          }
+        }
+      }
+    }
+
+    day = day.add({ days: 1 });
   }
 
   return null;

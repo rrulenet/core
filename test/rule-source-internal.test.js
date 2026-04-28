@@ -82,6 +82,34 @@ test('rule/source: complex monthly after searches by period without materializin
   );
 });
 
+test('rule/source: minutely window after jumps across calendar gaps', () => {
+  const source = new RuleSource(makeSpec({
+    freq: 'MINUTELY',
+    dtstart: Temporal.ZonedDateTime.from('2026-04-28T11:00:00+02:00[Europe/Paris]'),
+    tzid: 'Europe/Paris',
+    byweekday: [{ weekday: 0 }, { weekday: 1 }, { weekday: 2 }, { weekday: 3 }, { weekday: 4 }],
+    byhour: [11],
+    byminute: Array.from({ length: 60 }, (_, index) => index),
+    bysecond: [0],
+  }));
+  source.all = () => {
+    throw new Error('all() should not be called by minutely window after()');
+  };
+
+  assert.equal(
+    source.after(Temporal.Instant.from('2026-04-28T18:00:00Z'), false)?.toString(),
+    '2026-04-29T11:00:00+02:00[Europe/Paris]',
+  );
+  assert.equal(
+    source.after(Temporal.Instant.from('2026-04-29T09:00:00Z'), true)?.toString(),
+    '2026-04-29T11:00:00+02:00[Europe/Paris]',
+  );
+  assert.equal(
+    source.after(Temporal.Instant.from('2026-05-01T16:00:00Z'), false)?.toString(),
+    '2026-05-04T11:00:00+02:00[Europe/Paris]',
+  );
+});
+
 test('rule/source: count zero short-circuits to an empty cached result', () => {
   const source = new RuleSource(makeSpec({ count: 0 }));
 

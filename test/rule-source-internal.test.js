@@ -57,6 +57,31 @@ test('rule/source: simple monthly cadence handles inclusive boundaries and cachi
   ]);
 });
 
+test('rule/source: complex monthly after searches by period without materializing all()', () => {
+  const source = new RuleSource(makeSpec({
+    freq: 'MONTHLY',
+    dtstart: Temporal.ZonedDateTime.from('2026-01-01T18:00:00+01:00[Europe/Paris]'),
+    tzid: 'Europe/Paris',
+    byweekday: [{ weekday: 1 }],
+    bysetpos: [2],
+    byhour: [18],
+    byminute: [0],
+    bysecond: [0],
+  }));
+  source.all = () => {
+    throw new Error('all() should not be called by open-ended after()');
+  };
+
+  assert.equal(
+    source.after(Temporal.Instant.from('2026-04-28T00:00:00Z'), false)?.toString(),
+    '2026-05-12T18:00:00+02:00[Europe/Paris]',
+  );
+  assert.equal(
+    source.after(Temporal.Instant.from('2026-05-12T16:00:00Z'), true)?.toString(),
+    '2026-05-12T18:00:00+02:00[Europe/Paris]',
+  );
+});
+
 test('rule/source: count zero short-circuits to an empty cached result', () => {
   const source = new RuleSource(makeSpec({ count: 0 }));
 

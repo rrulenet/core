@@ -37,6 +37,10 @@ export class DateSource implements SourceQuery {
     return values.length ? values[values.length - 1]! : null;
   }
 
+  occursAt(instant: Temporal.Instant): boolean {
+    return this.dates.some((value) => Temporal.Instant.compare(value.toInstant(), instant) === 0);
+  }
+
   toTextDescription(options?: ToTextOptions): string {
     return getToTextLocale(options?.locale).sourceDateCountPhrase(this.dates.length);
   }

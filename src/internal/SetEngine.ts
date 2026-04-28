@@ -46,7 +46,7 @@ function evaluateBetween(expression: SetExpression, after: Temporal.Instant, bef
       const [first, ...rest] = expression.expressions;
       return evaluateBetween(first, after, before, inc).filter((value) => {
         const instant = value.toInstant();
-        return rest.every((entry) => evaluateBetween(entry, instant, instant, true).some((candidate) => Temporal.Instant.compare(candidate.toInstant(), instant) === 0));
+        return rest.every((entry) => evaluateContains(entry, instant));
       });
     }
     case 'difference': {
@@ -57,6 +57,24 @@ function evaluateBetween(expression: SetExpression, after: Temporal.Instant, bef
       return evaluateBetween(expression.include, after, before, inc)
         .filter((value) => !excluded.has(value.toInstant().epochNanoseconds.toString()));
     }
+  }
+}
+
+function evaluateContains(expression: SetExpression, instant: Temporal.Instant): boolean {
+  switch (expression.kind) {
+    case 'source':
+      return expression.source.occursAt
+        ? expression.source.occursAt(instant)
+        : expression.source.between(instant, instant, true)
+          .some((value) => Temporal.Instant.compare(value.toInstant(), instant) === 0);
+    case 'union':
+      return expression.expressions.some((entry) => evaluateContains(entry, instant));
+    case 'intersection':
+      return expression.expressions.length > 0 &&
+        expression.expressions.every((entry) => evaluateContains(entry, instant));
+    case 'difference':
+      return evaluateContains(expression.include, instant) &&
+        !evaluateContains(expression.exclude, instant);
   }
 }
 
@@ -80,8 +98,7 @@ function evaluateAfter(expression: SetExpression, after: Temporal.Instant, inc: 
         const candidate = evaluateAfter(expression.include, cursor, inclusive);
         if (!candidate) return null;
         const instant = candidate.toInstant();
-        const excluded = evaluateBetween(expression.exclude, instant, instant, true)
-          .some((value) => Temporal.Instant.compare(value.toInstant(), instant) === 0);
+        const excluded = evaluateContains(expression.exclude, instant);
         if (!excluded) return candidate;
         cursor = instant;
         inclusive = false;

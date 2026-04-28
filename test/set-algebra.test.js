@@ -4,7 +4,7 @@ import { Temporal } from 'temporal-polyfill';
 
 import { SetAlgebra } from '../dist/index.mjs';
 import { datetime, Frequency, RRule, RRuleSet } from './support/compat.js';
-import { DateSource } from '../dist/engine.mjs';
+import { DateSource, SetEngine } from '../dist/engine.mjs';
 
 test('set/algebra: union composes rule and explicit date sources without RRuleSet', () => {
   const expression = SetAlgebra.union(
@@ -57,6 +57,64 @@ test('set/algebra: difference subtracts a composed exclusion expression', () => 
     '2026-04-27T09:00:00.000Z',
     '2026-04-29T09:00:00.000Z',
   ]);
+});
+
+test('set/algebra: difference after checks exact exclusions without bounded scans', () => {
+  let includeAfterCalls = 0;
+  let excludeContainsCalls = 0;
+  const include = {
+    all() {
+      throw new Error('include all() should not be called by difference after()');
+    },
+    between() {
+      throw new Error('include between() should not be called by difference after()');
+    },
+    before() {
+      throw new Error('include before() should not be called by difference after()');
+    },
+    after(after, inc) {
+      includeAfterCalls += 1;
+      const candidates = [
+        Temporal.ZonedDateTime.from('2026-08-11T18:00:00+02:00[Europe/Paris]'),
+        Temporal.ZonedDateTime.from('2026-09-08T18:00:00+02:00[Europe/Paris]'),
+      ];
+      return candidates.find((value) => {
+        const cmp = Temporal.Instant.compare(value.toInstant(), after);
+        return inc ? cmp >= 0 : cmp > 0;
+      }) ?? null;
+    },
+  };
+  const exclude = {
+    all() {
+      throw new Error('exclude all() should not be called by difference after()');
+    },
+    between() {
+      throw new Error('exclude between() should not be called by difference after()');
+    },
+    before() {
+      throw new Error('exclude before() should not be called by difference after()');
+    },
+    after() {
+      throw new Error('exclude after() should not be called by difference after()');
+    },
+    occursAt(instant) {
+      excludeContainsCalls += 1;
+      return Temporal.Instant.compare(instant, Temporal.Instant.from('2026-08-11T16:00:00Z')) === 0;
+    },
+  };
+
+  const expression = new SetEngine({
+    kind: 'difference',
+    include: { kind: 'source', source: include },
+    exclude: { kind: 'source', source: exclude },
+  });
+
+  assert.equal(
+    expression.after(Temporal.Instant.from('2026-07-01T00:00:00Z'), false)?.toString(),
+    '2026-09-08T18:00:00+02:00[Europe/Paris]',
+  );
+  assert.equal(includeAfterCalls, 2);
+  assert.equal(excludeContainsCalls, 2);
 });
 
 test('set/algebra: intersection keeps only shared occurrences', () => {

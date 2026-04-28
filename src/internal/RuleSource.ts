@@ -417,6 +417,42 @@ function advancePeriod(current: Temporal.ZonedDateTime, spec: RuleSpec): Tempora
   }
 }
 
+function isOnInterval(date: Temporal.ZonedDateTime, spec: RuleSpec): boolean {
+  switch (spec.freq) {
+    case 'YEARLY':
+      return (date.year - spec.dtstart.year) % spec.interval === 0;
+    case 'MONTHLY': {
+      const start = spec.dtstart.year * 12 + spec.dtstart.month;
+      const current = date.year * 12 + date.month;
+      return (current - start) % spec.interval === 0;
+    }
+    case 'WEEKLY': {
+      const start = periodLowerBound(spec.dtstart, spec);
+      const current = periodLowerBound(date, spec);
+      const days = start.until(current, { largestUnit: 'days' }).days;
+      return days >= 0 && days % (7 * spec.interval) === 0;
+    }
+    case 'DAILY': {
+      const start = spec.dtstart.toPlainDate();
+      const current = date.toPlainDate();
+      const days = start.until(current, { largestUnit: 'days' }).days;
+      return days >= 0 && days % spec.interval === 0;
+    }
+    case 'HOURLY': {
+      const hours = spec.dtstart.until(date, { largestUnit: 'hours' }).hours;
+      return hours >= 0 && hours % spec.interval === 0;
+    }
+    case 'MINUTELY': {
+      const minutes = spec.dtstart.until(date, { largestUnit: 'minutes' }).minutes;
+      return minutes >= 0 && minutes % spec.interval === 0;
+    }
+    case 'SECONDLY': {
+      const seconds = spec.dtstart.until(date, { largestUnit: 'seconds' }).seconds;
+      return seconds >= 0 && seconds % spec.interval === 0;
+    }
+  }
+}
+
 function hasSparseSubdailyCalendarFilters(spec: RuleSpec): boolean {
   if (!['HOURLY', 'MINUTELY', 'SECONDLY'].includes(spec.freq)) return false;
   if (spec.bysetpos?.length) return false;
@@ -766,6 +802,30 @@ function periodLowerBound(cursor: Temporal.ZonedDateTime, spec: RuleSpec): Tempo
     default:
       return cursor;
   }
+}
+
+function searchAfterByPeriod(spec: RuleSpec, after: Temporal.Instant, inc: boolean): Temporal.ZonedDateTime | null {
+  let cursor = periodLowerBound(spec.dtstart, spec);
+  let safety = 0;
+
+  while (safety < 10_000) {
+    safety += 1;
+    const candidates = emitForPeriod(cursor, spec)
+      .filter((date) => {
+        const instant = date.toInstant();
+        const lower = inc ? Temporal.Instant.compare(instant, after) >= 0 : Temporal.Instant.compare(instant, after) > 0;
+        return lower &&
+          Temporal.ZonedDateTime.compare(date, spec.dtstart) >= 0 &&
+          (!spec.until || Temporal.ZonedDateTime.compare(date, spec.until) <= 0);
+      })
+      .sort(compareByInstant);
+
+    if (candidates.length) return candidates[0]!;
+    cursor = advancePeriod(cursor, spec);
+    if (spec.until && Temporal.ZonedDateTime.compare(periodLowerBound(cursor, spec), spec.until) > 0) return null;
+  }
+
+  return null;
 }
 
 function skipMode(spec: RuleSpec): 'OMIT' | 'BACKWARD' | 'FORWARD' {
@@ -1477,6 +1537,9 @@ export class RuleSource implements SourceQuery {
     if (hasBoundedSubdailySearchCandidate(this.spec)) {
       return boundedSubdailyAfter(this.spec, after, inc);
     }
+    if (this.spec.count === undefined) {
+      return searchAfterByPeriod(this.spec, after, inc);
+    }
     return this.all().find((date) => {
       const cmp = Temporal.Instant.compare(date.toInstant(), after);
       return inc ? cmp >= 0 : cmp > 0;
@@ -1492,5 +1555,19 @@ export class RuleSource implements SourceQuery {
       return inc ? cmp <= 0 : cmp < 0;
     });
     return values.length ? values[values.length - 1]! : null;
+  }
+
+  occursAt(instant: Temporal.Instant): boolean {
+    if (this.spec.count !== undefined) {
+      return this.all().some((date) => Temporal.Instant.compare(date.toInstant(), instant) === 0);
+    }
+
+    const date = instant.toZonedDateTimeISO(this.spec.dtstart.timeZoneId);
+    if (Temporal.ZonedDateTime.compare(date, this.spec.dtstart) < 0) return false;
+    if (this.spec.until && Temporal.ZonedDateTime.compare(date, this.spec.until) > 0) return false;
+    if (!isOnInterval(date, this.spec)) return false;
+
+    return emitForPeriod(periodLowerBound(date, this.spec), this.spec)
+      .some((candidate) => Temporal.Instant.compare(candidate.toInstant(), instant) === 0);
   }
 }

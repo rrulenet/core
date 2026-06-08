@@ -421,7 +421,7 @@ test('text: locale registry can extend an existing locale without forking the re
 
 test('text: built-in locale registry includes additional shipped locales', () => {
   const locales = listToTextLocales();
-  for (const code of ['ar', 'de', 'es', 'fr', 'he', 'hi', 'yue-hant', 'zh-hans']) {
+  for (const code of ['ar', 'de', 'es', 'fr', 'he', 'hi', 'id', 'it', 'ja', 'pt', 'ru', 'yue-hant', 'zh-hans']) {
     assert.equal(locales.includes(code), true);
   }
 });
@@ -459,6 +459,24 @@ test('text: built-in locales render representative basic phrases', () => {
 
   assert.equal(daily.toText({ locale: 'zh-Hans' }), '每日 在 10时、12时和17时 UTC');
   assert.equal(weekday.toText({ locale: 'zh-Hans' }), '每个工作日');
+
+  assert.equal(daily.toText({ locale: 'pt' }), 'todo dia às 10:00, 12:00 e 17:00 UTC');
+  assert.equal(weekday.toText({ locale: 'pt' }), 'todo dia útil');
+
+  assert.equal(daily.toText({ locale: 'ja' }), '毎日 10時、12時、17時に UTC');
+  assert.equal(weekday.toText({ locale: 'ja' }), '毎平日');
+
+  assert.equal(daily.toText({ locale: 'ru' }), 'каждый день в 10:00, 12:00 и 17:00 UTC');
+  assert.equal(weekday.toText({ locale: 'ru' }), 'каждый рабочий день');
+
+  assert.equal(daily.toText({ locale: 'id' }), 'setiap hari pukul 10.00, 12.00, dan 17.00 UTC');
+  assert.equal(weekday.toText({ locale: 'id' }), 'setiap hari kerja');
+
+  assert.equal(daily.toText({ locale: 'it' }), 'ogni giorno alle 10:00, 12:00 e 17:00 UTC');
+  assert.equal(weekday.toText({ locale: 'it' }), 'ogni giorno feriale');
+
+  assert.equal(daily.toText({ locale: 'pt-BR' }), daily.toText({ locale: 'pt' }));
+  assert.equal(daily.toText({ locale: 'ja-JP' }), daily.toText({ locale: 'ja' }));
 });
 
 test('text: built-in locales render representative advanced phrases', () => {
@@ -494,4 +512,19 @@ test('text: built-in locales render representative advanced phrases', () => {
 
   assert.equal(yearly.toText({ locale: 'zh-Hans' }), '每年 在每年的 第100 日');
   assert.equal(set.toText({ locale: 'zh-Hans' }), '每月 在 星期一和星期三 在第 第2 次');
+
+  assert.equal(yearly.toText({ locale: 'pt' }), 'todo ano no 100º dia do ano');
+  assert.equal(set.toText({ locale: 'pt' }), 'todo mês na segunda-feira e quarta-feira na 2ª ocorrência');
+
+  assert.equal(yearly.toText({ locale: 'ja' }), '毎年 毎年第100日に');
+  assert.equal(set.toText({ locale: 'ja' }), '毎月 月曜日、水曜日に 第2番目の発生');
+
+  assert.equal(yearly.toText({ locale: 'ru' }), 'каждый год в 100-й день года');
+  assert.equal(set.toText({ locale: 'ru' }), 'каждый месяц в понедельник и среду в 2-е вхождение');
+
+  assert.equal(yearly.toText({ locale: 'id' }), 'setiap tahun pada hari ke-100 setiap tahun');
+  assert.equal(set.toText({ locale: 'id' }), 'setiap bulan pada Senin dan Rabu pada kejadian ke-2');
+
+  assert.equal(yearly.toText({ locale: 'it' }), "ogni anno il 100º giorno dell'anno");
+  assert.equal(set.toText({ locale: 'it' }), 'ogni mese di lunedì e mercoledì alla 2ª occorrenza');
 });

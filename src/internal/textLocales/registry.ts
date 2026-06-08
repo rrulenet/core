@@ -5,6 +5,11 @@ import { ES_LOCALE } from './es.ts';
 import { FR_LOCALE } from './fr.ts';
 import { HE_LOCALE } from './he.ts';
 import { HI_LOCALE } from './hi.ts';
+import { ID_LOCALE } from './id.ts';
+import { IT_LOCALE } from './it.ts';
+import { JA_LOCALE } from './ja.ts';
+import { PT_LOCALE } from './pt.ts';
+import { RU_LOCALE } from './ru.ts';
 import { YUE_HANT_LOCALE } from './yueHant.ts';
 import { ZH_HANS_LOCALE } from './zhHans.ts';
 import type { ResolvedTextLocale, ToTextLocaleDefinition, ToTextOptions } from './shared.ts';
@@ -17,6 +22,11 @@ const localeRegistry = new Map<string, ToTextLocaleDefinition>([
   ['fr', FR_LOCALE],
   ['he', HE_LOCALE],
   ['hi', HI_LOCALE],
+  ['id', ID_LOCALE],
+  ['it', IT_LOCALE],
+  ['ja', JA_LOCALE],
+  ['pt', PT_LOCALE],
+  ['ru', RU_LOCALE],
   ['yue-hant', YUE_HANT_LOCALE],
   ['zh-hans', ZH_HANS_LOCALE],
 ]);

@@ -1,6 +1,6 @@
 {
   "name": "@rrulenet/core",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Shared recurrence engine for parsing, querying, timezone-aware expansion, set composition, and text rendering.",
   "license": "MIT",
   "type": "module",
@@ -64,11 +64,11 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "temporal-polyfill": "^0.3.2"
+    "temporal-polyfill": "^1.0.1"
   },
   "devDependencies": {
-    "@types/node": "^25.9.1",
-    "tsdown": "^0.22.1",
+    "@types/node": "^26.0.1",
+    "tsdown": "^0.22.3",
     "typescript": "^6.0.3"
   },
   "engines": {

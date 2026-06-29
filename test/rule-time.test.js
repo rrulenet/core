@@ -437,7 +437,7 @@ test('rule/time: yearly between works across timezone conversion windows', () =>
   );
   assert.deepEqual(
     Temporal.Instant.from(dates.at(-1).toISOString()).toZonedDateTimeISO('Europe/Berlin').toString({ smallestUnit: 'second' }),
-    '2056-07-01T10:00:00+01:00[Europe/Berlin]',
+    '2056-07-01T10:00:00+02:00[Europe/Berlin]',
   );
 });
 

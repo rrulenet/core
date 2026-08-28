@@ -288,7 +288,7 @@ test('rule: constructor does not mutate the passed options object', () => {
   assert.deepEqual(rule.origOptions, options);
 });
 
-test('rule: options exposes normalized defaults while origOptions preserves caller shape', () => {
+test('rule: options uses the rrule.js yearly default while origOptions preserves caller shape', () => {
   const rule = new RRule({
     count: 3,
     dtstart: datetime(2026, 4, 11, 9, 0, 0),
@@ -298,7 +298,7 @@ test('rule: options exposes normalized defaults while origOptions preserves call
     count: 3,
     dtstart: datetime(2026, 4, 11, 9, 0, 0),
   });
-  assert.equal(rule.options.freq, Frequency.DAILY);
+  assert.equal(rule.options.freq, Frequency.YEARLY);
   assert.equal(rule.options.interval, 1);
   assert.equal(rule.options.count, 3);
   assert.equal(rule.options.dtstart?.toISOString(), '2026-04-11T09:00:00.000Z');
@@ -539,6 +539,18 @@ test('rule: rejects negative interval', () => {
         dtstart: datetime(2026, 4, 11, 9, 0, 0),
       }),
     /interval must be greater than 0/,
+  );
+});
+
+test('rule: rejects negative count values', () => {
+  assert.throws(
+    () =>
+      new RRule({
+        freq: Frequency.DAILY,
+        count: -1,
+        dtstart: datetime(2026, 4, 11, 9, 0, 0),
+      }),
+    /count must be greater than or equal to 0/,
   );
 });
 
@@ -918,6 +930,40 @@ test('rule: monthly bysetpos remains chronological even when positions are rever
     '2025-03-31T08:00:00.000Z',
     '2025-04-01T08:00:00.000Z',
   ]);
+});
+
+test('rule: out-of-range negative bysetpos values do not emit an occurrence', () => {
+  const rule = new RRule({
+    freq: Frequency.MONTHLY,
+    bymonthday: [20, 31],
+    bysetpos: -2,
+    dtstart: datetime(2010, 1, 1),
+    count: 6,
+  });
+
+  assert.deepEqual(rule.all().map((date) => date.toISOString().slice(0, 10)), [
+    '2010-01-20',
+    '2010-03-20',
+    '2010-05-20',
+    '2010-07-20',
+    '2010-08-20',
+    '2010-10-20',
+  ]);
+});
+
+test('rule: coinciding bysetpos values emit one occurrence per instant', () => {
+  const rule = new RRule({
+    freq: Frequency.YEARLY,
+    bymonth: 1,
+    bymonthday: 15,
+    bysetpos: [1, -1],
+    count: 6,
+    dtstart: datetime(2023, 1, 1, 9),
+  });
+
+  const occurrences = rule.all().map((date) => date.toISOString());
+  assert.equal(occurrences.length, 6);
+  assert.equal(new Set(occurrences).size, 6);
 });
 
 test('rule: monthly bysetpos applies after time expansion when multiple byhour values are present', () => {

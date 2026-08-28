@@ -138,6 +138,22 @@ test('rrulestr: optionsToString serializes bynweekday as BYDAY ordinals', () => 
   assert.equal(serialized, 'RRULE:FREQ=MONTHLY;BYDAY=1TU,-1TH');
 });
 
+test('rrulestr: WeekdayStr arrays serialize to valid BYDAY values', () => {
+  const rule = new RRule({
+    freq: Frequency.MONTHLY,
+    count: 20,
+    bymonth: [3, 4, 5, 6],
+    dtstart: new Date('2025-02-17T23:00:00.000Z'),
+    interval: 1,
+    byweekday: ['MO', 'TU', 'WE'],
+  });
+
+  assert.equal(
+    rule.toString(),
+    'DTSTART:20250217T230000Z\nRRULE:FREQ=MONTHLY;COUNT=20;BYMONTH=3,4,5,6;INTERVAL=1;BYDAY=MO,TU,WE',
+  );
+});
+
 test('rrulestr: returns RRule for a single RRULE block', () => {
   const value = rrulestr('DTSTART;TZID=UTC:19970902T090000\nRRULE:FREQ=DAILY;COUNT=3;BYMONTHDAY=3,5');
 
@@ -608,20 +624,28 @@ test('rrulestr: parseString unfolds folded RRULE input', () => {
   ]);
 });
 
-test('rrulestr: invalid BYDAY tokens are ignored during parsing', () => {
-  const rule = RRule.fromString(
-    [
-      'DTSTART:20191219T000000Z',
-      'RRULE:FREQ=WEEKLY;COUNT=4;BYDAY=TH,XX,0MO',
-    ].join('\n'),
-  );
+test('rrulestr: parseString rejects invalid BYDAY tokens', () => {
+  for (const byday of ['TH,XX,0MO', '']) {
+    assert.throws(
+      () => RRule.parseString(`RRULE:FREQ=WEEKLY;BYDAY=${byday}`),
+      /Invalid weekday string/,
+    );
+  }
+});
 
-  assert.deepEqual(rule.all().map((date) => date.toISOString()), [
-    '2019-12-19T00:00:00.000Z',
-    '2019-12-26T00:00:00.000Z',
-    '2020-01-02T00:00:00.000Z',
-    '2020-01-09T00:00:00.000Z',
-  ]);
+test('rrulestr: parseString rejects unknown and malformed RRULE properties', () => {
+  for (const value of [
+    'RRULE:INVALID_RULE',
+    'RRULE:FOO=BAR',
+    'RRULE:FREQ=DAILY;BROKEN',
+    'RRULE:FREQ=DAILY;FOO=BAR',
+    'RRULE:',
+  ]) {
+    assert.throws(
+      () => RRule.parseString(value),
+      /Unknown RRULE property/,
+    );
+  }
 });
 
 test('rrulestr: parseString rejects invalid FREQ values', () => {
@@ -650,15 +674,16 @@ test('rrulestr: parseString rejects invalid UNTIL values', () => {
   );
 });
 
-test('rrulestr: parseString accepts empty BYDAY as omitted', () => {
-  const rule = RRule.fromString(
-    [
-      'DTSTART:19970902T090000',
-      'RRULE:FREQ=WEEKLY;BYDAY=;WKST=SU',
-    ].join('\n'),
+test('rrulestr: parseString rejects empty BYDAY values', () => {
+  assert.throws(
+    () => RRule.fromString(
+      [
+        'DTSTART:19970902T090000',
+        'RRULE:FREQ=WEEKLY;BYDAY=;WKST=SU',
+      ].join('\n'),
+    ),
+    /Invalid weekday string/,
   );
-
-  assert.equal(rule.toString(), 'DTSTART:19970902T090000Z\nRRULE:FREQ=WEEKLY;WKST=SU');
 });
 
 test('rrulestr: parseString rejects malformed DTSTART lines', () => {

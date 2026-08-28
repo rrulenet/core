@@ -125,7 +125,7 @@ export function normalizeOptions(input: Partial<Options>): Options {
   }
 
   return {
-    freq: input.freq ?? Frequency.DAILY,
+    freq: input.freq ?? Frequency.YEARLY,
     dtstart: input.dtstart ?? null,
     interval: input.interval ?? 1,
     wkst: input.wkst ?? null,

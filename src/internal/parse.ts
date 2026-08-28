@@ -127,8 +127,12 @@ export function parseRuleString(input: string): Partial<Options> {
     }
 
     for (const part of rule.split(';')) {
-      const [key, rawValue] = part.split('=');
-      if (!key || rawValue === undefined) continue;
+      const separatorIndex = part.indexOf('=');
+      const key = separatorIndex >= 0 ? part.slice(0, separatorIndex) : part;
+      if (!key || separatorIndex < 0) {
+        throw new Error(`Unknown RRULE property '${key}'`);
+      }
+      const rawValue = part.slice(separatorIndex + 1);
       switch (key.toUpperCase()) {
         case 'FREQ':
           result.freq = parseFreq(rawValue.toUpperCase());
@@ -170,14 +174,18 @@ export function parseRuleString(input: string): Partial<Options> {
           result.bysecond = rawValue.split(',').map(Number);
           break;
         case 'BYDAY':
-          result.byweekday = rawValue
-            .split(',')
-            .map((token) => parseWeekdayToken(token.toUpperCase()))
-            .filter(Boolean) as Weekday[];
+          result.byweekday = rawValue.split(',').map((token) => {
+            const weekday = parseWeekdayToken(token.toUpperCase());
+            if (!weekday) throw new SyntaxError(`Invalid weekday string: ${token}`);
+            return weekday;
+          });
           break;
-        case 'WKST':
-          result.wkst = parseWeekdayToken(rawValue.toUpperCase())?.weekday;
+        case 'WKST': {
+          const weekday = parseWeekdayToken(rawValue.toUpperCase());
+          if (!weekday || weekday.n) throw new SyntaxError(`Invalid weekday string: ${rawValue}`);
+          result.wkst = weekday.weekday;
           break;
+        }
         case 'TZID':
           result.tzid = rawValue;
           break;
@@ -190,6 +198,8 @@ export function parseRuleString(input: string): Partial<Options> {
           }
           result.skip = rawValue.toUpperCase() as Skip;
           break;
+        default:
+          throw new Error(`Unknown RRULE property '${key}'`);
       }
     }
   }

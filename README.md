@@ -60,6 +60,28 @@ npm install @rrulenet/core
 
 Most applications should not import it directly. It is the package that powers the public APIs exposed by `@rrulenet/rrule`, `@rrulenet/recurrence`, and the workflows exposed through `@rrulenet/cli`.
 
+## Temporal sources (0.2.0)
+
+`RuleSource` advances nominal calendar values for every supported RFC frequency,
+including HOURLY, MINUTELY, and SECONDLY. Ambiguous local times use the first
+passage. Nonexistent times use the pre-transition offset, following RFC 5545's
+verified erratum 4271; subsequent periods keep the nominal clock time. Resolved
+collisions are sorted and deduplicated before COUNT. UNTIL is inclusive and
+cannot be combined with COUNT. Invalid base-calendar dates are omitted;
+RSCALE/SKIP keeps its extension policies.
+
+`ElapsedSource`, exported from `@rrulenet/core/engine`, instead calculates
+`start + n * every` on the instant timeline. Its spec requires an exact `start`
+and an ISO time duration (`PT30M`, for example), with optional `tzid`, `count`,
+or `until`. Steps must be positive whole seconds; exact anchors retain their
+precision. The timezone only controls presentation. Most applications should
+use `Recurrence.elapsed` from the public recurrence package.
+
+RFC export rejects precision or a local DTSTART boundary it cannot preserve.
+UNTIL is serialized in UTC. Unbounded source `all()` retains the existing finite
+preview convention (513 values); use bounded or directional queries for other
+parts of an unbounded series.
+
 ## Notes
 
 - `@rrulenet/core` owns the engine implementation.

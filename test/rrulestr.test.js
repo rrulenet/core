@@ -525,12 +525,12 @@ test('rrulestr: parseString keeps local UNTIL semantics for named timezones', ()
   ]);
 });
 
-test('rrulestr: roundtrips named-timezone DTSTART with local UNTIL exactly', () => {
+test('rrulestr: canonicalizes named-timezone local UNTIL as an exact UTC bound', () => {
   const input = 'DTSTART;TZID=America/New_York:19970902T090000\nRRULE:FREQ=DAILY;UNTIL=19980902T090000;INTERVAL=1';
 
   const parsed = rrulestr(input);
 
-  assert.equal(parsed.toString(), input);
+  assert.equal(parsed.toString(), 'DTSTART;TZID=America/New_York:19970902T090000\nRRULE:FREQ=DAILY;UNTIL=19980902T130000Z;INTERVAL=1');
 });
 
 test('rrulestr: parseString is case-insensitive for property names', () => {

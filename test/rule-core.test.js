@@ -2023,7 +2023,7 @@ test('rule: monthly negative bymonthday crosses February in leap years', () => {
   ]);
 });
 
-test('rule: monthly interval from a 31st keeps six-month cadence across short months', () => {
+test('rule: monthly interval from a 31st omits invalid dates without consuming COUNT', () => {
   const rule = new RRule({
     freq: Frequency.MONTHLY,
     interval: 6,
@@ -2034,9 +2034,9 @@ test('rule: monthly interval from a 31st keeps six-month cadence across short mo
 
   assert.deepEqual(rule.all().map((date) => date.toISOString()), [
     '2025-03-31T01:01:00.000Z',
-    '2025-09-30T01:01:00.000Z',
     '2026-03-31T01:01:00.000Z',
-    '2026-09-30T01:01:00.000Z',
+    '2027-03-31T01:01:00.000Z',
+    '2028-03-31T01:01:00.000Z',
   ]);
 });
 

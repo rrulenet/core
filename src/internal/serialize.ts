@@ -53,6 +53,13 @@ function toCompactLocal(date: Date, tzid: string) {
 }
 
 function formatDateWithZone(date: Date, tzid?: string | null) {
+  if (date.getUTCMilliseconds()) throw new RangeError('RFC 5545 cannot preserve fractional seconds');
+  if (tzid) {
+    const value = dateToZdt(date, tzid);
+    if (value.toPlainDateTime().toZonedDateTime(tzid).epochNanoseconds !== value.epochNanoseconds) {
+      throw new RangeError('Local DTSTART cannot preserve an explicit second overlap passage');
+    }
+  }
   if (!tzid || tzid.toUpperCase() === 'UTC') {
     return `:${toCompactUtc(date)}`;
   }
@@ -60,10 +67,8 @@ function formatDateWithZone(date: Date, tzid?: string | null) {
 }
 
 function formatUntil(date: Date, tzid?: string | null) {
-  if (!tzid || tzid.toUpperCase() === 'UTC') {
-    return toCompactUtc(date);
-  }
-  return toCompactLocal(date, tzid);
+  if (date.getUTCMilliseconds()) throw new RangeError('RFC 5545 cannot preserve fractional seconds');
+  return toCompactUtc(date);
 }
 
 function formatWeekdayValue(value: ByWeekday | number[] | number): string {

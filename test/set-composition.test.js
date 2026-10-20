@@ -547,6 +547,7 @@ test('set/timezone+dense: excluding one ambiguous fall-back instant does not rem
     tzid: 'Europe/Paris',
     dtstart: datetime(2026, 10, 24, 23, 0, 0),
   }));
+  set.rdate(new Date('2026-10-25T01:00:00.000Z'));
   set.exdate(new Date('2026-10-25T01:00:00.000Z'));
 
   assert.deepEqual(set.all().map((value) => value.toISOString()), [
@@ -554,6 +555,7 @@ test('set/timezone+dense: excluding one ambiguous fall-back instant does not rem
     '2026-10-25T00:00:00.000Z',
     '2026-10-25T02:00:00.000Z',
     '2026-10-25T03:00:00.000Z',
+    '2026-10-25T04:00:00.000Z',
   ]);
   assert.equal(
     set.after(new Date('2026-10-25T00:00:00.000Z'), false)?.toISOString(),

@@ -105,6 +105,9 @@ function normalizeByEaster(value: number | null): number | undefined {
  * Normalize compat-style rule options and apply engine defaults.
  */
 export function normalizeOptions(input: Partial<Options>): Options {
+  if (input.count != null && input.until != null) {
+    throw new Error('COUNT and UNTIL are mutually exclusive');
+  }
   if (input.skip && !input.rscale) {
     throw new Error('SKIP MUST NOT be present unless RSCALE is present');
   }

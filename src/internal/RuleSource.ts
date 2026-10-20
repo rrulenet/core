@@ -245,7 +245,7 @@ function expandByTime(base: Temporal.ZonedDateTime, spec: RuleSpec): Temporal.Zo
   for (const hour of hours) {
     for (const minute of minutes) {
       for (const second of seconds) {
-        out.push(base.with({ hour, minute, second }));
+        out.push(base.with({ hour, minute, second }, { offset: 'ignore', disambiguation: 'compatible' }));
       }
     }
   }
@@ -263,11 +263,17 @@ function applyBySetPos(values: Temporal.ZonedDateTime[], spec: RuleSpec): Tempor
 }
 
 function matches(date: Temporal.ZonedDateTime, spec: RuleSpec): boolean {
+  const calendarId = rscaleCalendarId(spec);
+  const monthDay = spec.rscale === 'HEBREW' && spec.bymonthday?.length
+    ? matchesHebrewMonthDay(date, spec) : matchesByMonthDay(date, spec);
+  const yearDay = calendarId && spec.byyearday?.length
+    ? matchesCalendarYearDay(date, spec, calendarId) : matchesByYearDay(date, spec);
+  const weekNo = spec.rscale === 'HEBREW' && spec.freq === 'MINUTELY' && spec.interval === 1440 &&
+    spec.byweekno?.length && spec.byweekday?.length
+    ? matchesHebrewByWeekNoAndWeekday(date, spec) : matchesByWeekNo(date, spec);
   return (
     matchesByMonth(date, spec) &&
-    matchesByMonthDay(date, spec) &&
-    matchesByYearDay(date, spec) &&
-    matchesByWeekNo(date, spec) &&
+    monthDay && yearDay && weekNo &&
     matchesByWeekday(date, spec) &&
     matchesByEaster(date, spec)
   );
@@ -316,7 +322,7 @@ function emitForPeriod(periodBase: Temporal.ZonedDateTime, spec: RuleSpec): Temp
         }
       }
       if (days.size === 0) days.add(spec.dtstart.day);
-      const candidates = [...days].sort((a, b) => a - b).flatMap((day) => expandByTime(monthStart.with({ day }), spec));
+      const candidates = [...days].filter(day => day <= monthStart.daysInMonth).sort((a, b) => a - b).flatMap((day) => expandByTime(monthStart.with({ day }), spec));
       return applyBySetPos(candidates.filter((value) => matches(value, spec)), spec);
     }
     case 'YEARLY': {
@@ -921,7 +927,7 @@ function withPreservedTime(
     millisecond: timeSource.millisecond,
     microsecond: timeSource.microsecond,
     nanosecond: timeSource.nanosecond,
-  });
+  }, { offset: 'ignore', disambiguation: 'compatible' });
 }
 
 function buildRscaleMonthDate(
@@ -1383,7 +1389,14 @@ function allHebrewRscaleDailyLikeWeekNo(spec: RuleSpec): Temporal.ZonedDateTime[
 export class RuleSource implements SourceQuery {
   private allCache: Temporal.ZonedDateTime[] | null = null;
 
-  constructor(private readonly spec: RuleSpec) {}
+  private readonly calendar: CalendarRuleSource | null;
+
+  constructor(private readonly spec: RuleSpec) {
+    // RSCALE month/year expansion keeps its dedicated invalid-date policies.
+    // Its daily and subdaily clocks share the nominal local progression.
+    this.calendar = spec.rscale && ['MONTHLY', 'YEARLY'].includes(spec.freq)
+      ? null : new CalendarRuleSource(spec);
+  }
 
   private allSparseSubdaily(): Temporal.ZonedDateTime[] {
     const out: Temporal.ZonedDateTime[] = [];
@@ -1425,6 +1438,7 @@ export class RuleSource implements SourceQuery {
   }
 
   all(): Temporal.ZonedDateTime[] {
+    if (this.calendar) return this.calendar.all();
     if (this.allCache) return this.allCache;
     if (this.spec.count === 0) {
       this.allCache = [];
@@ -1594,6 +1608,7 @@ export class RuleSource implements SourceQuery {
   }
 
   between(after: Temporal.Instant, before: Temporal.Instant, inc: boolean): Temporal.ZonedDateTime[] {
+    if (this.calendar) return this.calendar.between(after, before, inc);
     if (hasSimpleOpenEndedCadence(this.spec)) {
       return simpleCadenceBetween(this.spec, after, before, inc);
     }
@@ -1609,6 +1624,7 @@ export class RuleSource implements SourceQuery {
   }
 
   after(after: Temporal.Instant, inc: boolean): Temporal.ZonedDateTime | null {
+    if (this.calendar) return this.calendar.after(after, inc);
     if (hasSimpleOpenEndedCadence(this.spec)) {
       return simpleCadenceAfter(this.spec, after, inc);
     }
@@ -1625,6 +1641,7 @@ export class RuleSource implements SourceQuery {
   }
 
   before(before: Temporal.Instant, inc: boolean): Temporal.ZonedDateTime | null {
+    if (this.calendar) return this.calendar.before(before, inc);
     if (hasSimpleOpenEndedCadence(this.spec)) {
       return simpleCadenceBefore(this.spec, before, inc);
     }
@@ -1636,6 +1653,7 @@ export class RuleSource implements SourceQuery {
   }
 
   occursAt(instant: Temporal.Instant): boolean {
+    if (this.calendar) return this.calendar.occursAt(instant);
     if (this.spec.count !== undefined) {
       return this.all().some((date) => Temporal.Instant.compare(date.toInstant(), instant) === 0);
     }
@@ -1647,5 +1665,209 @@ export class RuleSource implements SourceQuery {
 
     return emitForPeriod(periodLowerBound(date, this.spec), this.spec)
       .some((candidate) => Temporal.Instant.compare(candidate.toInstant(), instant) === 0);
+  }
+}
+
+
+// A UTC ZonedDateTime is used only as a nominal calendar carrier. It is never
+// emitted: timezone resolution happens after nominal filtering and expansion.
+function nominal(value: Temporal.ZonedDateTime): Temporal.ZonedDateTime {
+  // Rehydrate at the public boundary: callers can use a different Temporal
+  // polyfill instance, whose objects are not branded by this module's runtime.
+  return Temporal.PlainDateTime.from(value.toPlainDateTime().toString()).toZonedDateTime('UTC');
+}
+
+class CalendarRuleSource implements SourceQuery {
+  private readonly origin: Temporal.ZonedDateTime;
+  private readonly unit: 'years' | 'months' | 'weeks' | 'days' | 'hours' | 'minutes' | 'seconds';
+  private readonly subdaily: boolean;
+  private cache: Temporal.ZonedDateTime[] | null = null;
+
+  constructor(private readonly spec: RuleSpec) {
+    this.origin = periodLowerBound(nominal(spec.dtstart), spec);
+    this.unit = ({ YEARLY: 'years', MONTHLY: 'months', WEEKLY: 'weeks', DAILY: 'days',
+      HOURLY: 'hours', MINUTELY: 'minutes', SECONDLY: 'seconds' } as const)[spec.freq];
+    this.subdaily = ['HOURLY', 'MINUTELY', 'SECONDLY'].includes(spec.freq);
+  }
+
+  private at(index: number): Temporal.ZonedDateTime {
+    return this.origin.add({ [this.unit]: index * this.spec.interval });
+  }
+
+  private index(value: Temporal.ZonedDateTime): number {
+    const difference = this.origin.until(value, { largestUnit: this.unit });
+    const amount = this.unit === 'weeks' ? difference.weeks : difference[this.unit];
+    return Math.max(0, Math.floor(amount / this.spec.interval));
+  }
+
+  private floor(value: Temporal.ZonedDateTime): Temporal.ZonedDateTime {
+    const zero = { millisecond: 0, microsecond: 0, nanosecond: 0 };
+    if (this.spec.freq === 'SECONDLY') return value.with(zero);
+    if (this.spec.freq === 'MINUTELY') return value.with({ ...zero, second: 0 });
+    if (this.spec.freq === 'HOURLY') return value.with({ ...zero, minute: 0, second: 0 });
+    return periodLowerBound(value, this.spec).with({ ...zero, hour: 0, minute: 0, second: 0 });
+  }
+
+  // An instant in the spring's shifted interval has an earlier nominal
+  // preimage. In the second autumn passage, the whole first passage precedes it.
+  private queryNominal(value: Temporal.Instant, upper: boolean): Temporal.ZonedDateTime {
+    const zoned = value.toZonedDateTimeISO(this.spec.tzid);
+    let result = nominal(zoned);
+    const transition = zoned.add({ nanoseconds: 1 }).getTimeZoneTransition('previous');
+    if (transition) {
+      const shift = transition.offsetNanoseconds - transition.subtract({ nanoseconds: 1 }).offsetNanoseconds;
+      const wall = nominal(transition);
+      if (shift > 0 && !upper && Temporal.ZonedDateTime.compare(result, wall.add({ nanoseconds: shift })) < 0) {
+        result = result.subtract({ nanoseconds: shift });
+      } else if (shift < 0 && upper && Temporal.ZonedDateTime.compare(result, wall.subtract({ nanoseconds: shift })) < 0) {
+        result = wall.subtract({ nanoseconds: shift });
+      }
+    }
+    return result;
+  }
+
+  private *values(from = 0, upper?: Temporal.Instant): Generator<Temporal.ZonedDateTime> {
+    if (this.spec.count === 0) return;
+    const end = upper && this.spec.until
+      ? (Temporal.Instant.compare(upper, this.spec.until.toInstant()) < 0 ? upper : this.spec.until.toInstant())
+      : upper ?? this.spec.until?.toInstant();
+    const nominalEnd = end ? this.queryNominal(end, true) : undefined;
+    let pending: Temporal.ZonedDateTime[] = [];
+    let bufferUntil: Temporal.ZonedDateTime | null = null;
+    let last: bigint | null = null;
+    let index = from;
+    let attempts = 0;
+    let skippedDays = 0;
+
+    while (attempts++ < (needsWideSearch(this.spec) ? 1_000_000 : 10_000) || bufferUntil) {
+      const cursor = this.at(index);
+      const floor = this.floor(cursor);
+      const done = nominalEnd && Temporal.ZonedDateTime.compare(floor, nominalEnd) > 0;
+      if (pending.length && (done || !bufferUntil || Temporal.ZonedDateTime.compare(floor, bufferUntil) > 0)) {
+        for (const candidate of dedupeByInstant(pending)) {
+          const stamp = candidate.epochNanoseconds;
+          if (stamp === last || stamp < this.spec.dtstart.epochNanoseconds || (end && stamp > end.epochNanoseconds)) continue;
+          last = stamp;
+          attempts = 0;
+          skippedDays = 0;
+          yield candidate;
+        }
+        pending = [];
+        bufferUntil = null;
+      }
+      if (done) return;
+
+      // Skip impossible calendar days without enumerating their seconds.
+      if (this.subdaily && !matches(cursor, this.spec)) {
+        if (++skippedDays > 10_000) return;
+        const nextDay = cursor.add({ days: 1 }).with({ hour: 0, minute: 0, second: 0, millisecond: 0, microsecond: 0, nanosecond: 0 });
+        index = Math.max(index + 1, this.index(nextDay));
+        if (Temporal.ZonedDateTime.compare(this.at(index), nextDay) < 0) index++;
+        continue;
+      }
+      if (this.subdaily) {
+        const hourMismatch = this.spec.byhour?.length && !this.spec.byhour.includes(cursor.hour);
+        const minuteMismatch = this.spec.freq !== 'HOURLY' && this.spec.byminute?.length && !this.spec.byminute.includes(cursor.minute);
+        if (hourMismatch || minuteMismatch) {
+          const next = hourMismatch
+            ? cursor.add({ hours: 1 }).with({ minute: 0, second: 0, millisecond: 0, microsecond: 0, nanosecond: 0 })
+            : cursor.add({ minutes: 1 }).with({ second: 0, millisecond: 0, microsecond: 0, nanosecond: 0 });
+          index = Math.max(index + 1, this.index(next));
+          if (Temporal.ZonedDateTime.compare(this.at(index), next) < 0) index++;
+          continue;
+        }
+      }
+      const candidates = this.subdaily
+        ? applyBySetPos(subdailyCandidatesForPeriod(cursor, this.spec).filter(value => matches(value, this.spec) && matchesTimeSelectors(value, this.spec)).sort(compareByInstant), this.spec)
+        : emitForPeriod(cursor, this.spec);
+      for (const candidate of candidates) {
+        const resolved = candidate.toPlainDateTime().toZonedDateTime(this.spec.tzid, { disambiguation: 'compatible' });
+        const resolvedWall = nominal(resolved);
+        if (Temporal.ZonedDateTime.compare(resolvedWall, candidate) > 0 &&
+            (!bufferUntil || Temporal.ZonedDateTime.compare(resolvedWall, bufferUntil) > 0)) {
+          bufferUntil = resolvedWall;
+        }
+        pending.push(resolved);
+      }
+      index++;
+    }
+    for (const candidate of dedupeByInstant(pending)) {
+      if (candidate.epochNanoseconds !== last && candidate.epochNanoseconds >= this.spec.dtstart.epochNanoseconds &&
+          (!end || candidate.epochNanoseconds <= end.epochNanoseconds)) yield candidate;
+    }
+  }
+
+  all(): Temporal.ZonedDateTime[] {
+    if (this.cache) return this.cache;
+    const out: Temporal.ZonedDateTime[] = [];
+    const limit = this.spec.count ?? (this.spec.until ? Infinity : 513);
+    if (limit === 0) return this.cache = out;
+    for (const value of this.values()) {
+      out.push(value);
+      if (out.length >= limit) break;
+    }
+    return this.cache = out;
+  }
+
+  between(after: Temporal.Instant, before: Temporal.Instant, inc: boolean): Temporal.ZonedDateTime[] {
+    if (Temporal.Instant.compare(after, before) > 0) return [];
+    const values = this.spec.count !== undefined ? this.all() : this.values(this.index(this.queryNominal(after, false)), before);
+    return Array.from(values).filter(value => {
+      const stamp = value.epochNanoseconds;
+      return (inc ? stamp >= after.epochNanoseconds : stamp > after.epochNanoseconds) &&
+        (inc ? stamp <= before.epochNanoseconds : stamp < before.epochNanoseconds);
+    });
+  }
+
+  after(after: Temporal.Instant, inc: boolean): Temporal.ZonedDateTime | null {
+    const values = this.spec.count !== undefined ? this.all() : this.values(this.index(this.queryNominal(after, false)));
+    for (const value of values) {
+      if (inc ? value.epochNanoseconds >= after.epochNanoseconds : value.epochNanoseconds > after.epochNanoseconds) return value;
+    }
+    return null;
+  }
+
+  before(before: Temporal.Instant, inc: boolean): Temporal.ZonedDateTime | null {
+    if (this.spec.count !== undefined) {
+      return this.all().filter(value => inc ? value.epochNanoseconds <= before.epochNanoseconds : value.epochNanoseconds < before.epochNanoseconds).at(-1) ?? null;
+    }
+    if (this.spec.until && before.epochNanoseconds > this.spec.until.epochNanoseconds) {
+      before = this.spec.until.toInstant();
+      inc = true;
+    }
+    const end = this.index(this.queryNominal(before, true));
+    let width = 1;
+    while (true) {
+      const begin = Math.max(0, end - width);
+      let result: Temporal.ZonedDateTime | null = null;
+      for (const value of this.values(begin, before)) {
+        if (inc ? value.epochNanoseconds <= before.epochNanoseconds : value.epochNanoseconds < before.epochNanoseconds) result = value;
+      }
+      if (result || begin === 0) {
+        const zoned = before.toZonedDateTimeISO(this.spec.tzid);
+        const transition = zoned.add({ nanoseconds: 1 }).getTimeZoneTransition('previous');
+        if (transition) {
+          const shift = transition.offsetNanoseconds - transition.subtract({ nanoseconds: 1 }).offsetNanoseconds;
+          // The last shifted gap candidate can follow the last regular one.
+          // Query that short nominal segment independently instead of scanning
+          // from a historical transition to the boundary.
+          if (shift > 0 && (!result || result.epochNanoseconds < transition.epochNanoseconds + BigInt(shift))) {
+            const start = nominal(transition).subtract({ nanoseconds: shift });
+            const stop = Temporal.Instant.fromEpochNanoseconds(transition.epochNanoseconds + BigInt(shift));
+            const ceiling = before.epochNanoseconds < stop.epochNanoseconds ? before : stop;
+            for (const value of this.values(this.index(start), ceiling)) {
+              if ((inc ? value.epochNanoseconds <= before.epochNanoseconds : value.epochNanoseconds < before.epochNanoseconds) &&
+                  (!result || value.epochNanoseconds > result.epochNanoseconds)) result = value;
+            }
+          }
+        }
+        return result;
+      }
+      width *= 2;
+    }
+  }
+
+  occursAt(instant: Temporal.Instant): boolean {
+    return this.after(instant, true)?.epochNanoseconds === instant.epochNanoseconds;
   }
 }

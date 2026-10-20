@@ -634,7 +634,7 @@ test('set/api: rrulestr canonicalizes legacy RRULE DTSTART form with TZID', () =
     parsed.toString(),
     [
       'DTSTART;TZID=America/New_York:20171201T080000',
-      'RRULE:FREQ=WEEKLY;UNTIL=20171224T235959',
+      'RRULE:FREQ=WEEKLY;UNTIL=20171225T045959Z',
     ].join('\n'),
   );
 });

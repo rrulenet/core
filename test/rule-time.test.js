@@ -113,7 +113,6 @@ test('rule/time: named timezone byhour values are interpreted in the target time
     dtstart: new Date(Date.UTC(2023, 0, 7, 0, 0, 0)),
     tzid: 'Asia/Karachi',
     until: new Date(Date.UTC(2023, 0, 22, 3, 48, 0)),
-    count: 30,
     interval: 1,
     byweekday: [RRule.MO, RRule.TU, RRule.WE],
     byhour: [0, 1],
@@ -1289,7 +1288,7 @@ test('rule/time: bysetpos with expanded times remains correct in named timezone 
   );
 });
 
-test('rule/time: hourly rule across fall-back keeps both ambiguous 02:00 instants', () => {
+test('rule/time: hourly rule across fall-back selects only the first ambiguous 02:00', () => {
   const rule = new RRule({
     freq: Frequency.HOURLY,
     count: 5,
@@ -1300,9 +1299,9 @@ test('rule/time: hourly rule across fall-back keeps both ambiguous 02:00 instant
   assert.deepEqual(rule.all().map((value) => value.toISOString()), [
     '2026-10-24T23:00:00.000Z',
     '2026-10-25T00:00:00.000Z',
-    '2026-10-25T01:00:00.000Z',
     '2026-10-25T02:00:00.000Z',
     '2026-10-25T03:00:00.000Z',
+    '2026-10-25T04:00:00.000Z',
   ]);
 });
 
@@ -1320,13 +1319,12 @@ test('rule/time: bounded hourly queries across fall-back distinguish the two amb
       .map((value) => value.toISOString()),
     [
       '2026-10-25T00:00:00.000Z',
-      '2026-10-25T01:00:00.000Z',
       '2026-10-25T02:00:00.000Z',
     ],
   );
   assert.equal(
     rule.after(new Date('2026-10-25T00:00:00.000Z'), false)?.toISOString(),
-    '2026-10-25T01:00:00.000Z',
+    '2026-10-25T02:00:00.000Z',
   );
   assert.equal(
     rule.before(new Date('2026-10-25T01:00:00.000Z'), false)?.toISOString(),

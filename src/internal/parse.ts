@@ -3,6 +3,7 @@ import { Temporal } from 'temporal-polyfill';
 import { datetime } from './dateutil.ts';
 import { Frequency, type Options, type Skip } from './options.ts';
 import { Weekday } from './weekday.ts';
+import { validateRuleSelectors } from './validateSelectors.ts';
 
 function unfoldLines(input: string): string[] {
   return input
@@ -206,5 +207,6 @@ export function parseRuleString(input: string): Partial<Options> {
   if (result.skip && !result.rscale) {
     throw new Error('SKIP MUST NOT be present unless RSCALE is present');
   }
+  validateRuleSelectors(result);
   return result;
 }

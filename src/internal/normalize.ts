@@ -5,6 +5,7 @@ import { Frequency, type ByMonth, type ByWeekday, type Options } from './options
 import { Weekday } from './weekday.ts';
 import type { ByWeekdaySpec, RuleFrequency, RuleSpec } from './spec.ts';
 import { dateToZdt } from './temporal.ts';
+import { validateRuleSelectors } from './validateSelectors.ts';
 
 const FREQ_MAP: Record<Frequency, RuleFrequency> = {
   [Frequency.YEARLY]: 'YEARLY',
@@ -41,21 +42,14 @@ function filterNumberList(
 }
 
 function normalizeByMonthList(value: ByMonth | ByMonth[] | null): ByMonth[] | undefined {
-  const values = asArray(value);
-  if (!values) return undefined;
-  const out: ByMonth[] = [];
-  for (const entry of values) {
-    if (typeof entry === 'number') {
-      if (Number.isInteger(entry) && entry >= 1 && entry <= 12) out.push(entry);
-      continue;
-    }
+  return asArray(value)?.map(entry => typeof entry === 'number' ? entry : entry.trim().toUpperCase());
+}
 
-    const token = entry.trim().toUpperCase();
-    if (!/^\d+L$/.test(token)) continue;
-    const numeric = Number(token.slice(0, -1));
-    if (numeric >= 1 && numeric <= 12) out.push(token);
-  }
-  return out;
+function normalizeSeconds(value: Options['bysecond']): number[] | undefined {
+  const seconds = asArray(value);
+  // RFC 5545's fallback for unsupported leap seconds. Resolve collisions before
+  // BYSETPOS and COUNT, while retaining the original selector for serialization.
+  return seconds ? [...new Set(seconds.map(second => second === 60 ? 59 : second))] : undefined;
 }
 
 function normalizeWeekday(value: ByWeekday): ByWeekdaySpec | null {
@@ -105,6 +99,7 @@ function normalizeByEaster(value: number | null): number | undefined {
  * Normalize compat-style rule options and apply engine defaults.
  */
 export function normalizeOptions(input: Partial<Options>): Options {
+  validateRuleSelectors(input);
   if (input.count != null && input.until != null) {
     throw new Error('COUNT and UNTIL are mutually exclusive');
   }
@@ -160,12 +155,12 @@ export function buildRuleSpecFromResolvedTemporalOptions(
   options: Options,
   resolved: ResolvedTemporalOptions = {},
 ): RuleSpec {
+  validateRuleSelectors(options);
   const tzid = resolved.tzid ?? options.tzid ?? 'UTC';
   const dtstart = resolved.dtstart ?? (options.dtstart ? dateToZdt(options.dtstart, tzid) : Temporal.Now.zonedDateTimeISO(tzid));
   const bymonthday = [
-    ...(filterNumberList(options.bymonthday, (value) => (value >= 1 && value <= 31) || (value <= -1 && value >= -31)) ?? []),
+    ...(asArray(options.bymonthday) ?? []),
     ...((options.bynmonthday ?? [])
-      .filter((value) => Number.isInteger(value) && value !== 0 && Math.abs(value) <= 31)
       .map((value) => -Math.abs(value))),
   ];
   const normalizedByNWeekday = (options.bynweekday ?? [])
@@ -187,7 +182,7 @@ export function buildRuleSpecFromResolvedTemporalOptions(
     until: resolved.until ?? normalizeDateLike(options.until, tzid),
     wkst: normalizeWkst(options.wkst),
     bysetpos: filterNumberList(options.bysetpos, () => true),
-    bymonth: normalizeByMonthList(options.bymonth)?.filter((value) => typeof value === 'number' || Boolean(options.rscale)),
+    bymonth: normalizeByMonthList(options.bymonth),
     bymonthday: bymonthday.length ? bymonthday : undefined,
     byyearday: filterNumberList(options.byyearday, (value) => (value >= 1 && value <= 366) || (value <= -1 && value >= -366)),
     byweekno: filterNumberList(options.byweekno, (value) => (value >= 1 && value <= 53) || (value <= -1 && value >= -53)),
@@ -195,9 +190,9 @@ export function buildRuleSpecFromResolvedTemporalOptions(
       ? [...(normalizedByWeekday ?? []), ...normalizedByNWeekday]
       : undefined,
     byeaster: normalizeByEaster(options.byeaster),
-    byhour: filterNumberList(options.byhour, (value) => value >= 0 && value <= 23),
-    byminute: filterNumberList(options.byminute, (value) => value >= 0 && value <= 59),
-    bysecond: filterNumberList(options.bysecond, (value) => value >= 0 && value <= 59),
+    byhour: asArray(options.byhour)?.slice(),
+    byminute: asArray(options.byminute)?.slice(),
+    bysecond: normalizeSeconds(options.bysecond),
     rscale: options.rscale ?? undefined,
     skip: options.skip ?? undefined,
   };

@@ -602,20 +602,13 @@ test('rule: rejects bysetpos containing 0', () => {
   );
 });
 
-test('rule: ignores invalid bymonth values', () => {
-  const rule = new RRule({
+test('rule: rejects invalid bymonth values', () => {
+  assert.throws(() => new RRule({
     freq: Frequency.YEARLY,
     dtstart: datetime(2019, 12, 19, 0, 0, 0),
     bymonth: [0],
     count: 4,
-  });
-
-  assert.deepEqual(rule.all().map((value) => value.toISOString()), [
-    '2019-12-19T00:00:00.000Z',
-    '2020-12-19T00:00:00.000Z',
-    '2021-12-19T00:00:00.000Z',
-    '2022-12-19T00:00:00.000Z',
-  ]);
+  }), /Invalid BYMONTH value 0/);
 });
 
 test('rule: ignores invalid byyearday values', () => {
@@ -645,21 +638,13 @@ test('rule: conflicting byyearday and byweekno parts produce no dates', () => {
   assert.deepEqual(rule.all(), []);
 });
 
-test('rule: ignores invalid bymonthday values', () => {
-  const rule = new RRule({
+test('rule: rejects invalid members of bymonthday lists', () => {
+  assert.throws(() => new RRule({
     freq: Frequency.MONTHLY,
     dtstart: datetime(1997, 9, 2, 9, 0, 0),
     bymonthday: [0, 31],
     count: 5,
-  });
-
-  assert.deepEqual(rule.all().map((value) => value.toISOString()), [
-    '1997-10-31T09:00:00.000Z',
-    '1997-12-31T09:00:00.000Z',
-    '1998-01-31T09:00:00.000Z',
-    '1998-03-31T09:00:00.000Z',
-    '1998-05-31T09:00:00.000Z',
-  ]);
+  }), /Invalid BYMONTHDAY value 0/);
 });
 
 test('rule: ignores invalid byweekday values from options', () => {
@@ -679,22 +664,10 @@ test('rule: ignores invalid byweekday values from options', () => {
   ]);
 });
 
-test('rule: ignores invalid byhour byminute and bysecond values', () => {
-  const rule = new RRule({
-    freq: Frequency.DAILY,
-    dtstart: datetime(2019, 12, 19, 0, 0, 0),
-    byhour: [-1, 14, 25],
-    byminute: [-1, 30, 60],
-    bysecond: [-1, 15, 61],
-    count: 4,
-  });
-
-  assert.deepEqual(rule.all().map((value) => value.toISOString()), [
-    '2019-12-19T14:30:15.000Z',
-    '2019-12-20T14:30:15.000Z',
-    '2019-12-21T14:30:15.000Z',
-    '2019-12-22T14:30:15.000Z',
-  ]);
+test('rule: rejects invalid members of clock selector lists', () => {
+  for (const [key, value] of Object.entries({ byhour: [-1, 14, 25], byminute: [-1, 30, 60], bysecond: [-1, 15, 61] })) {
+    assert.throws(() => new RRule({ freq: Frequency.DAILY, dtstart: datetime(2019, 12, 19), [key]: value, count: 4 }), RangeError);
+  }
 });
 
 test('rule: monthly first friday with ordinal byweekday works', () => {

@@ -82,6 +82,20 @@ UNTIL is serialized in UTC. Unbounded source `all()` retains the existing finite
 preview convention (513 values); use bounded or directional queries for other
 parts of an unbounded series.
 
+## Selector validation
+
+Rule options and RFC parsing reject invalid `BYHOUR`, `BYMINUTE`, `BYSECOND`,
+`BYMONTH`, and `BYMONTHDAY` values with a `RangeError` identifying the field
+and offending value. Mixed valid/invalid lists are rejected as a whole.
+The `bynmonthday` compatibility alias is validated too. This replaces silent
+filtering of invalid members; valid negative month days and supported RSCALE
+leap-month tokens remain accepted.
+
+`BYSECOND=60` uses RFC 5545's fallback to second 59. Resulting collisions are
+deduplicated before BYSETPOS and COUNT, while serialization retains the original
+selector. Valid selectors that generate nonexistent calendar dates, such as day
+31 in February, keep their existing omission or explicit RSCALE/SKIP behavior.
+
 ## Notes
 
 - `@rrulenet/core` owns the engine implementation.

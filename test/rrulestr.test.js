@@ -279,7 +279,7 @@ test('rrulestr: external until is honored when the RRULE string omits UNTIL', ()
 test('rrulestr: rejects decimal interval instead of looping forever', () => {
   assert.throws(
     () => rrulestr('DTSTART:20231003T040000Z\nRRULE:FREQ=DAILY;INTERVAL=0.5'),
-    /interval must be greater than 0/i,
+    /Invalid INTERVAL value 0.5/i,
   );
 });
 
@@ -492,10 +492,12 @@ test('rrulestr: rule toString and fromString roundtrip negative bymonthday and b
   const rule = new RRule({
     freq: Frequency.YEARLY,
     count: 6,
-    bymonth: [2],
+    bymonth: [12],
     bymonthday: [-1],
     byweekno: [-1],
-    byweekday: [RRule.MO],
+    // A Monday on December 31 belongs to the next ISO week-year. Use a
+    // Friday so this roundtrip exercises actual, nonempty occurrences.
+    byweekday: [RRule.FR],
     dtstart: datetime(1997, 1, 1, 9, 0, 0),
   });
 
@@ -503,6 +505,7 @@ test('rrulestr: rule toString and fromString roundtrip negative bymonthday and b
   const reparsed = RRule.fromString(serialized);
 
   assert.equal(serialized, reparsed.toString());
+  assert.equal(rule.all().length, 6);
   assert.deepEqual(
     reparsed.all().map((date) => date.toISOString()),
     rule.all().map((date) => date.toISOString()),
@@ -773,9 +776,9 @@ test('rrulestr: unfolds folded RRULE lines with advanced fields', () => {
   assert.equal(value instanceof RRule, true);
   assert.deepEqual(value.all().map((date) => date.toISOString()), [
     '1997-03-03T09:00:00.000Z',
-    '1997-03-28T09:00:00.000Z',
-    '1997-09-01T09:00:00.000Z',
     '1997-09-26T09:00:00.000Z',
+    '1998-03-02T09:00:00.000Z',
+    '1998-09-25T09:00:00.000Z',
   ]);
 });
 

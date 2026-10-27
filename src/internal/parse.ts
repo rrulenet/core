@@ -82,8 +82,21 @@ function parseWeekdayToken(token: string): Weekday | null {
 function parseByMonthToken(token: string): number | string {
   const trimmed = token.trim().toUpperCase();
   if (/^\d+L$/.test(trimmed)) return trimmed;
-  const numeric = Number(trimmed);
-  return Number.isFinite(numeric) ? numeric : trimmed;
+  return parseInteger(trimmed, 'BYMONTH');
+}
+
+function parseInteger(value: string, field: string): number {
+  const token = value.trim();
+  if (!/^[+-]?\d+$/.test(token)) {
+    throw new RangeError(`Invalid ${field} value ${value}: expected a decimal integer`);
+  }
+  const result = Number(token);
+  if (!Number.isSafeInteger(result)) throw new RangeError(`Invalid ${field} value ${value}: expected a safe integer`);
+  return result;
+}
+
+function parseIntegerList(value: string, field: string): number[] {
+  return value.split(',').map(token => parseInteger(token, field));
 }
 
 function parseDtstartToken(token: string, result: Partial<Options>) {
@@ -139,10 +152,10 @@ export function parseRuleString(input: string): Partial<Options> {
           result.freq = parseFreq(rawValue.toUpperCase());
           break;
         case 'INTERVAL':
-          result.interval = Number(rawValue);
+          result.interval = parseInteger(rawValue, 'INTERVAL');
           break;
         case 'COUNT':
-          result.count = Number(rawValue);
+          result.count = parseInteger(rawValue, 'COUNT');
           break;
         case 'UNTIL':
           result.until = parseCompactDateTime(rawValue, result.tzid ?? undefined);
@@ -151,28 +164,28 @@ export function parseRuleString(input: string): Partial<Options> {
           result.bymonth = rawValue.split(',').map(parseByMonthToken);
           break;
         case 'BYMONTHDAY':
-          result.bymonthday = rawValue.split(',').map(Number);
+          result.bymonthday = parseIntegerList(rawValue, 'BYMONTHDAY');
           break;
         case 'BYWEEKNO':
-          result.byweekno = rawValue.split(',').map(Number);
+          result.byweekno = parseIntegerList(rawValue, 'BYWEEKNO');
           break;
         case 'BYYEARDAY':
-          result.byyearday = rawValue.split(',').map(Number);
+          result.byyearday = parseIntegerList(rawValue, 'BYYEARDAY');
           break;
         case 'BYSETPOS':
-          result.bysetpos = rawValue.split(',').map(Number);
+          result.bysetpos = parseIntegerList(rawValue, 'BYSETPOS');
           break;
         case 'BYEASTER':
-          result.byeaster = Number(rawValue);
+          result.byeaster = parseInteger(rawValue, 'BYEASTER');
           break;
         case 'BYHOUR':
-          result.byhour = rawValue.split(',').map(Number);
+          result.byhour = parseIntegerList(rawValue, 'BYHOUR');
           break;
         case 'BYMINUTE':
-          result.byminute = rawValue.split(',').map(Number);
+          result.byminute = parseIntegerList(rawValue, 'BYMINUTE');
           break;
         case 'BYSECOND':
-          result.bysecond = rawValue.split(',').map(Number);
+          result.bysecond = parseIntegerList(rawValue, 'BYSECOND');
           break;
         case 'BYDAY':
           result.byweekday = rawValue.split(',').map((token) => {

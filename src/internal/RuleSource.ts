@@ -2,6 +2,7 @@ import { Temporal } from 'temporal-polyfill';
 
 import type { ByMonthSpec, RuleSpec, SourceQuery } from './spec.ts';
 import { compareByInstant, dedupeByInstant, dedupeSortedByInstant } from './temporal.ts';
+import { RecurrenceSearchLimitError } from './SearchLimitError.ts';
 
 const monthWeekdayCache = new WeakMap<RuleSpec, Map<string, number[][]>>();
 const timePartsCache = new WeakMap<RuleSpec, { hours?: number[]; minutes?: number[]; seconds?: number[] }>();
@@ -253,11 +254,14 @@ function expandByTime(base: Temporal.ZonedDateTime, spec: RuleSpec): Temporal.Zo
 }
 
 function applyBySetPos(values: Temporal.ZonedDateTime[], spec: RuleSpec): Temporal.ZonedDateTime[] {
-  if (!spec.bysetpos?.length) return values;
+  // Positions refer to a chronological set, regardless of which selectors
+  // produced a candidate (including overlapping or repeated selectors).
+  const candidates = dedupeByInstant(values);
+  if (!spec.bysetpos?.length) return candidates;
   const out: Temporal.ZonedDateTime[] = [];
   for (const pos of spec.bysetpos) {
-    const index = pos > 0 ? pos - 1 : values.length + pos;
-    if (index >= 0 && index < values.length) out.push(values[index]!);
+    const index = pos > 0 ? pos - 1 : candidates.length + pos;
+    if (index >= 0 && index < candidates.length) out.push(candidates[index]!);
   }
   return dedupeByInstant(out);
 }
@@ -352,7 +356,7 @@ function emitForPeriod(periodBase: Temporal.ZonedDateTime, spec: RuleSpec): Temp
       }
 
       if (!spec.byyearday?.length && !spec.byweekno?.length) {
-        if (!spec.bymonth?.length && (spec.bymonthday?.length || spec.byweekday?.length || spec.bysetpos?.length)) {
+        if (!spec.bymonth?.length && (spec.bymonthday?.length || spec.byweekday?.length)) {
           const yearStart = periodBase.with({ month: 1, day: 1 });
           const yearEnd = yearStart.add({ years: 1 }).subtract({ days: 1 });
           const days: Temporal.ZonedDateTime[] = [];
@@ -378,9 +382,10 @@ function emitForPeriod(periodBase: Temporal.ZonedDateTime, spec: RuleSpec): Temp
           : [spec.dtstart.month];
         const candidates = months.flatMap((month) => {
           const sample = periodBase.with({ month, day: 1 });
-          return emitForPeriod(sample, { ...spec, freq: 'MONTHLY' });
+          // Expand every selected month before applying the yearly positions.
+          return emitForPeriod(sample, { ...spec, freq: 'MONTHLY', bysetpos: undefined });
         });
-        return dedupeByInstant(candidates.filter((value) => matches(value, spec)));
+        return applyBySetPos(candidates.filter((value) => matches(value, spec)), spec);
       }
 
       const yearStart = periodBase.with({ month: 1, day: 1 });
@@ -1677,10 +1682,34 @@ function nominal(value: Temporal.ZonedDateTime): Temporal.ZonedDateTime {
   return Temporal.PlainDateTime.from(value.toPlainDateTime().toString()).toZonedDateTime('UTC');
 }
 
+function hasReachableClock(spec: RuleSpec): boolean {
+  const units = spec.freq === 'HOURLY' ? 24 : spec.freq === 'MINUTELY' ? 1440 : spec.freq === 'SECONDLY' ? 86400 : 0;
+  if (!units || !Number.isSafeInteger(spec.interval)) return true;
+  if (!spec.byhour?.length && (spec.freq === 'HOURLY' || !spec.byminute?.length) &&
+      (spec.freq !== 'SECONDLY' || !spec.bysecond?.length)) return true;
+  const scale = units / 24;
+  const start = spec.dtstart.hour * scale + (scale >= 60 ? spec.dtstart.minute * (scale / 60) : 0)
+    + (scale === 3600 ? spec.dtstart.second : 0);
+  const step = spec.interval % units;
+  let cursor = start;
+  // The nominal clock repeats after at most one day's worth of distinct
+  // residues. Date filters can only remove candidates from this finite set.
+  do {
+    const hour = Math.floor(cursor / scale);
+    const minute = Math.floor(cursor / (scale === 3600 ? 60 : 1)) % 60;
+    if ((!spec.byhour?.length || spec.byhour.includes(hour)) &&
+        (spec.freq === 'HOURLY' || !spec.byminute?.length || spec.byminute.includes(minute)) &&
+        (spec.freq !== 'SECONDLY' || !spec.bysecond?.length || spec.bysecond.includes(cursor % 60))) return true;
+    cursor = (cursor + step) % units;
+  } while (cursor !== start);
+  return false;
+}
+
 class CalendarRuleSource implements SourceQuery {
   private readonly origin: Temporal.ZonedDateTime;
   private readonly unit: 'years' | 'months' | 'weeks' | 'days' | 'hours' | 'minutes' | 'seconds';
   private readonly subdaily: boolean;
+  private readonly reachableClock: boolean;
   private cache: Temporal.ZonedDateTime[] | null = null;
 
   constructor(private readonly spec: RuleSpec) {
@@ -1688,6 +1717,7 @@ class CalendarRuleSource implements SourceQuery {
     this.unit = ({ YEARLY: 'years', MONTHLY: 'months', WEEKLY: 'weeks', DAILY: 'days',
       HOURLY: 'hours', MINUTELY: 'minutes', SECONDLY: 'seconds' } as const)[spec.freq];
     this.subdaily = ['HOURLY', 'MINUTELY', 'SECONDLY'].includes(spec.freq);
+    this.reachableClock = hasReachableClock(spec);
   }
 
   private at(index: number): Temporal.ZonedDateTime {
@@ -1727,7 +1757,7 @@ class CalendarRuleSource implements SourceQuery {
   }
 
   private *values(from = 0, upper?: Temporal.Instant): Generator<Temporal.ZonedDateTime> {
-    if (this.spec.count === 0) return;
+    if (this.spec.count === 0 || !this.reachableClock) return;
     const end = upper && this.spec.until
       ? (Temporal.Instant.compare(upper, this.spec.until.toInstant()) < 0 ? upper : this.spec.until.toInstant())
       : upper ?? this.spec.until?.toInstant();
@@ -1759,7 +1789,7 @@ class CalendarRuleSource implements SourceQuery {
 
       // Skip impossible calendar days without enumerating their seconds.
       if (this.subdaily && !matches(cursor, this.spec)) {
-        if (++skippedDays > 10_000) return;
+        if (++skippedDays > 10_000) throw new RecurrenceSearchLimitError();
         const nextDay = cursor.add({ days: 1 }).with({ hour: 0, minute: 0, second: 0, millisecond: 0, microsecond: 0, nanosecond: 0 });
         index = Math.max(index + 1, this.index(nextDay));
         if (Temporal.ZonedDateTime.compare(this.at(index), nextDay) < 0) index++;
@@ -1791,10 +1821,7 @@ class CalendarRuleSource implements SourceQuery {
       }
       index++;
     }
-    for (const candidate of dedupeByInstant(pending)) {
-      if (candidate.epochNanoseconds !== last && candidate.epochNanoseconds >= this.spec.dtstart.epochNanoseconds &&
-          (!end || candidate.epochNanoseconds <= end.epochNanoseconds)) yield candidate;
-    }
+    throw new RecurrenceSearchLimitError();
   }
 
   all(): Temporal.ZonedDateTime[] {
@@ -1828,6 +1855,7 @@ class CalendarRuleSource implements SourceQuery {
   }
 
   before(before: Temporal.Instant, inc: boolean): Temporal.ZonedDateTime | null {
+    if (!this.reachableClock) return null;
     if (this.spec.count !== undefined) {
       return this.all().filter(value => inc ? value.epochNanoseconds <= before.epochNanoseconds : value.epochNanoseconds < before.epochNanoseconds).at(-1) ?? null;
     }

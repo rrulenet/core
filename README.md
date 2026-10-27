@@ -100,6 +100,35 @@ Repeated `BYHOUR`, `BYMINUTE`, and `BYSECOND` members represent one candidate
 value during expansion. They do not shift BYSETPOS positions or consume COUNT;
 the original lists remain available for serialization.
 
+Positional selection uses the distinct chronological candidates of the whole
+frequency interval. For example, a yearly rule spanning several months applies
+BYSETPOS after expanding every selected month. Overlapping positive/negative
+selectors and repeated days or weeks do not occupy additional positions.
+
+Numeric RFC tokens must be decimal integers. Empty list members, hexadecimal
+values, exponent notation, fractional tokens, and unsafe integers are rejected
+before conversion, rather than silently changing a selector.
+
+## Search completeness
+
+Calendar-clock queries detect unreachable subdaily clock phases without moving
+DTSTART or relaxing filters. A proven impossible phase produces an empty result.
+If the calendar search exhausts its candidate budget without establishing
+completeness, it throws `RecurrenceSearchLimitError` (exported from the package
+root and `/engine`), with code `RECURRENCE_SEARCH_LIMIT`. Do not interpret that
+error as proof that a schedule has no further occurrences. Dedicated RSCALE
+month/year expansion retains its separately bounded search implementation.
+
+## Reliability checks
+
+`npm test` includes deterministic generated UTC rules checked against an
+independent bounded reference, selector duplicate/order invariants, and query
+consistency. `npm run test:reliability` runs the focused reliability suites.
+Use `RRULENET_TEST_SEED` and `RRULENET_TEST_CASES` to reproduce or expand a run.
+Failures report the seed, case index, and a reduced rule. The reference covers
+the tested Gregorian UTC subset; timezone and non-ISO calendar fixtures are
+verified separately.
+
 ## Notes
 
 - `@rrulenet/core` owns the engine implementation.

@@ -11,6 +11,7 @@ export { SetAlgebra, QueryMethodsSource } from './SetAlgebra.ts';
 export { groomRuleOptions, parseRRuleStringComponents } from './rrulestr.ts';
 export type { RRuleStrOptions } from './rrulestr.ts';
 export { DateSource } from './internal/DateSource.ts';
+export { RecurrenceSearchLimitError } from './internal/SearchLimitError.ts';
 export { buildRuleSpecFromResolvedTemporalOptions, normalizeOptions } from './internal/normalize.ts';
 export type { ResolvedTemporalOptions } from './internal/normalize.ts';
 export type { RuleSpec, SourceQuery } from './internal/spec.ts';

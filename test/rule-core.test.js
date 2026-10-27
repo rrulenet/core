@@ -626,7 +626,7 @@ test('rule: ignores invalid byyearday values', () => {
   ]);
 });
 
-test('rule: conflicting byyearday and byweekno parts produce no dates', () => {
+test('rule: an unproven empty calendar search reports its resource limit', () => {
   const rule = new RRule({
     freq: Frequency.MINUTELY,
     byyearday: [100],
@@ -635,7 +635,7 @@ test('rule: conflicting byyearday and byweekno parts produce no dates', () => {
     dtstart: datetime(2025, 1, 1, 0, 0, 0),
   });
 
-  assert.deepEqual(rule.all(), []);
+  assert.throws(() => rule.all(), error => error.code === 'RECURRENCE_SEARCH_LIMIT');
 });
 
 test('rule: rejects invalid members of bymonthday lists', () => {

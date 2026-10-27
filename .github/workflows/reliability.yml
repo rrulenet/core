@@ -33,7 +33,7 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
       - name: Test compiled artifacts
-        run: node --test test/**/*.test.js
+        run: node --test test/*.test.js
       - name: Exercise non-ISO calendars
         if: matrix.node == 24 && matrix.timezone == 'UTC'
-        run: node --import ./test/support/full-calendar.js --test test/**/*.test.js
+        run: node --import ./test/support/full-calendar.js --test test/*.test.js

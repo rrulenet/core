@@ -96,6 +96,10 @@ deduplicated before BYSETPOS and COUNT, while serialization retains the original
 selector. Valid selectors that generate nonexistent calendar dates, such as day
 31 in February, keep their existing omission or explicit RSCALE/SKIP behavior.
 
+Repeated `BYHOUR`, `BYMINUTE`, and `BYSECOND` members represent one candidate
+value during expansion. They do not shift BYSETPOS positions or consume COUNT;
+the original lists remain available for serialization.
+
 ## Notes
 
 - `@rrulenet/core` owns the engine implementation.

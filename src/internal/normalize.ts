@@ -45,6 +45,11 @@ function normalizeByMonthList(value: ByMonth | ByMonth[] | null): ByMonth[] | un
   return asArray(value)?.map(entry => typeof entry === 'number' ? entry : entry.trim().toUpperCase());
 }
 
+function uniqueNumberList(value: number | number[] | null): number[] | undefined {
+  const values = asArray(value);
+  return values ? [...new Set(values)] : undefined;
+}
+
 function normalizeSeconds(value: Options['bysecond']): number[] | undefined {
   const seconds = asArray(value);
   // RFC 5545's fallback for unsupported leap seconds. Resolve collisions before
@@ -190,8 +195,9 @@ export function buildRuleSpecFromResolvedTemporalOptions(
       ? [...(normalizedByWeekday ?? []), ...normalizedByNWeekday]
       : undefined,
     byeaster: normalizeByEaster(options.byeaster),
-    byhour: asArray(options.byhour)?.slice(),
-    byminute: asArray(options.byminute)?.slice(),
+    // Repeated clock members must not occupy extra positions in BYSETPOS.
+    byhour: uniqueNumberList(options.byhour),
+    byminute: uniqueNumberList(options.byminute),
     bysecond: normalizeSeconds(options.bysecond),
     rscale: options.rscale ?? undefined,
     skip: options.skip ?? undefined,

@@ -82,6 +82,13 @@ UNTIL is serialized in UTC. Unbounded source `all()` retains the existing finite
 preview convention (513 values); use bounded or directional queries for other
 parts of an unbounded series.
 
+`RuleSource.iterate()`, `ElapsedSource.iterate()`, and `SetEngine.iterate()`
+provide ordered streams for callers that stop early. Calendar period expansion
+selects date/time ranks without materializing a dense year's full Cartesian
+product. RRULE COUNT applies before explicit dates and exclusions. Dedicated
+RSCALE month/year sources and custom sources without `iterate()` retain their
+existing materialized traversal.
+
 ## Selector validation
 
 Rule options and RFC parsing reject invalid `BYHOUR`, `BYMINUTE`, `BYSECOND`,
@@ -118,6 +125,10 @@ completeness, it throws `RecurrenceSearchLimitError` (exported from the package
 root and `/engine`), with code `RECURRENCE_SEARCH_LIMIT`. Do not interpret that
 error as proof that a schedule has no further occurrences. Dedicated RSCALE
 month/year expansion retains its separately bounded search implementation.
+
+Directional set queries search relative to their boundary instead of using the
+finite `all()` preview. Streaming filters and directional set searches also
+throw `RecurrenceSearchLimitError` if their search budget is exhausted.
 
 ## Reliability checks
 

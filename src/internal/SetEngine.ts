@@ -2,6 +2,7 @@ import { Temporal } from 'temporal-polyfill';
 
 import type { SourceQuery } from './spec.ts';
 import { compareByInstant, dedupeByInstant } from './temporal.ts';
+import { RecurrenceSearchLimitError } from './SearchLimitError.ts';
 
 /**
  * Recursive set-expression tree used by the low-level engine.
@@ -11,6 +12,72 @@ export type SetExpression =
   | { kind: 'union'; expressions: SetExpression[] }
   | { kind: 'intersection'; expressions: SetExpression[] }
   | { kind: 'difference'; include: SetExpression; exclude: SetExpression };
+
+function *iterateExpression(expression: SetExpression): Generator<Temporal.ZonedDateTime> {
+  if (expression.kind === 'source') {
+    let last: bigint | undefined;
+    for (const value of expression.source.iterate?.() ?? expression.source.all().slice().sort(compareByInstant)) {
+      if (value.epochNanoseconds !== last) yield value;
+      last = value.epochNanoseconds;
+    }
+    return;
+  }
+  if (expression.kind === 'union') {
+    const iterators = expression.expressions.map(entry => iterateExpression(entry));
+    try {
+      const heads = iterators.map(iterator => iterator.next());
+      while (true) {
+        let next: Temporal.ZonedDateTime | undefined;
+        for (const head of heads) if (!head.done && (!next || compareByInstant(head.value, next) < 0)) next = head.value;
+        if (!next) return;
+        yield next;
+        for (let i = 0; i < heads.length; i++) {
+          if (!heads[i]!.done && compareByInstant(heads[i]!.value!, next) === 0) heads[i] = iterators[i]!.next();
+        }
+      }
+    } finally {
+      for (const iterator of iterators) iterator.return(undefined);
+    }
+    return;
+  }
+  if (expression.kind === 'intersection') {
+    if (!expression.expressions.length) return;
+    const iterators = expression.expressions.map(entry => iterateExpression(entry));
+    try {
+      const heads = iterators.map(iterator => iterator.next());
+      let skipped = 0;
+      const hasEnded = (): boolean => heads.some(head => !!head.done);
+      while (!hasEnded()) {
+        const latest = heads.reduce((a, b) => compareByInstant(a.value!, b.value!) >= 0 ? a : b).value!;
+        if (heads.every(head => compareByInstant(head.value!, latest) === 0)) {
+          yield latest;
+          skipped = 0;
+          for (let i = 0; i < heads.length; i++) heads[i] = iterators[i]!.next();
+        } else {
+          if (++skipped >= 10_000) throw new RecurrenceSearchLimitError();
+          for (let i = 0; i < heads.length; i++) {
+            if (compareByInstant(heads[i]!.value!, latest) < 0) heads[i] = iterators[i]!.next();
+          }
+        }
+      }
+    } finally {
+      for (const iterator of iterators) iterator.return(undefined);
+    }
+    return;
+  }
+  const include = expression.include;
+  let skipped = 0;
+  for (const value of iterateExpression(include)) {
+    const instant = value.toInstant();
+    const keep = !evaluateContains(expression.exclude, instant);
+    if (keep) {
+      skipped = 0;
+      yield value;
+    } else if (++skipped >= 10_000) {
+      throw new RecurrenceSearchLimitError();
+    }
+  }
+}
 
 function evaluateAll(expression: SetExpression): Temporal.ZonedDateTime[] {
   switch (expression.kind) {
@@ -103,13 +170,22 @@ function evaluateAfter(expression: SetExpression, after: Temporal.Instant, inc: 
         cursor = instant;
         inclusive = false;
       }
-      return null;
+      throw new RecurrenceSearchLimitError();
     }
-    default:
-      return evaluateAll(expression).find((value) => {
-        const cmp = Temporal.Instant.compare(value.toInstant(), after);
-        return inc ? cmp >= 0 : cmp > 0;
-      }) ?? null;
+    case 'intersection': {
+      if (!expression.expressions.length) return null;
+      let cursor = after;
+      let inclusive = inc;
+      for (let attempt = 0; attempt < 10_000; attempt++) {
+        const values = expression.expressions.map(entry => evaluateAfter(entry, cursor, inclusive));
+        if (values.some(value => !value)) return null;
+        const latest = values.reduce((a, b) => compareByInstant(a!, b!) >= 0 ? a : b)!;
+        if (values.every(value => compareByInstant(value!, latest) === 0)) return latest;
+        cursor = latest.toInstant();
+        inclusive = true;
+      }
+      throw new RecurrenceSearchLimitError();
+    }
   }
 }
 
@@ -124,12 +200,33 @@ function evaluateBefore(expression: SetExpression, before: Temporal.Instant, inc
       candidates.sort(compareByInstant);
       return candidates[candidates.length - 1] ?? null;
     }
-    default: {
-      const values = evaluateAll(expression).filter((value) => {
-        const cmp = Temporal.Instant.compare(value.toInstant(), before);
-        return inc ? cmp <= 0 : cmp < 0;
-      });
-      return values[values.length - 1] ?? null;
+    case 'difference': {
+      let cursor = before;
+      let inclusive = inc;
+      for (let attempt = 0; attempt < 10_000; attempt++) {
+        const value = evaluateBefore(expression.include, cursor, inclusive);
+        if (!value) return null;
+        const instant = value.toInstant();
+        const keep = !evaluateContains(expression.exclude, instant);
+        if (keep) return value;
+        cursor = instant;
+        inclusive = false;
+      }
+      throw new RecurrenceSearchLimitError();
+    }
+    case 'intersection': {
+      if (!expression.expressions.length) return null;
+      let cursor = before;
+      let inclusive = inc;
+      for (let attempt = 0; attempt < 10_000; attempt++) {
+        const values = expression.expressions.map(entry => evaluateBefore(entry, cursor, inclusive));
+        if (values.some(value => !value)) return null;
+        const earliest = values.reduce((a, b) => compareByInstant(a!, b!) <= 0 ? a : b)!;
+        if (values.every(value => compareByInstant(value!, earliest) === 0)) return earliest;
+        cursor = earliest.toInstant();
+        inclusive = true;
+      }
+      throw new RecurrenceSearchLimitError();
     }
   }
 }
@@ -146,6 +243,10 @@ export class SetEngine {
     if (this.allCache) return this.allCache;
     this.allCache = evaluateAll(this.expression).sort(compareByInstant);
     return this.allCache;
+  }
+
+  iterate(): Generator<Temporal.ZonedDateTime> {
+    return iterateExpression(this.expression);
   }
 
   between(after: Temporal.Instant, before: Temporal.Instant, inc: boolean): Temporal.ZonedDateTime[] {

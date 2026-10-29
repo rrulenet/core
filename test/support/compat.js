@@ -71,8 +71,9 @@ export const ALL_WEEKDAYS = [...ORDER];
 export const WEEKDAY_INSTANCES = ORDER.map((_, index) => new Weekday(index));
 
 export function datetime(year, month, day, hour = 0, minute = 0, second = 0) {
-  const date = new Date(Date.UTC(0, month - 1, day, hour, minute, second, 0));
-  date.setUTCFullYear(year);
+  const date = new Date(0);
+  date.setUTCFullYear(year, month - 1, day);
+  date.setUTCHours(hour, minute, second, 0);
   return date;
 }
 

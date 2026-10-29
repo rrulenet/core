@@ -60,6 +60,7 @@ export interface SourceQuery {
   before(before: Temporal.Instant, inc: boolean): Temporal.ZonedDateTime | null;
   occursAt?(instant: Temporal.Instant): boolean;
   all(): Temporal.ZonedDateTime[];
+  iterate?(): IterableIterator<Temporal.ZonedDateTime>;
   toTextDescription?(options?: ToTextOptions): string;
   isFullyConvertibleToText?(options?: ToTextOptions): boolean;
   textMergeDescriptor?(options?: ToTextOptions): TextMergeDescriptor | null;

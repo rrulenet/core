@@ -3,6 +3,7 @@ import { Temporal } from 'temporal-polyfill';
 import type { ByMonthSpec, RuleSpec, SourceQuery } from './spec.ts';
 import { compareByInstant, dedupeByInstant, dedupeSortedByInstant } from './temporal.ts';
 import { RecurrenceSearchLimitError } from './SearchLimitError.ts';
+import { ElapsedSource } from './ElapsedSource.ts';
 
 const monthWeekdayCache = new WeakMap<RuleSpec, Map<string, number[][]>>();
 const timePartsCache = new WeakMap<RuleSpec, { hours?: number[]; minutes?: number[]; seconds?: number[] }>();
@@ -40,26 +41,17 @@ function listMonthWeekdays(date: Temporal.ZonedDateTime, spec: RuleSpec, weekday
 
 function matchesByWeekday(date: Temporal.ZonedDateTime, spec: RuleSpec): boolean {
   if (!spec.byweekday?.length) return true;
+  if (spec.freq === 'YEARLY' && !spec.bymonth?.length && !spec.byweekno?.length) {
+    return matchesByWeekdayYearly(date, spec);
+  }
   return spec.byweekday.some((entry) => {
     if (!matchesWeekday(date, entry.weekday)) return false;
-    if (!entry.ordinal) return true;
+    // Classic rrule.js ignores ordinal prefixes for DAILY/WEEKLY rules.
+    if (!entry.ordinal || spec.freq === 'DAILY' || spec.freq === 'WEEKLY') return true;
     const days = listMonthWeekdays(date, spec, entry.weekday);
     const target = entry.ordinal > 0 ? days[entry.ordinal - 1] : days[days.length + entry.ordinal];
     return target === date.day;
   });
-}
-
-function listYearWeekdays(date: Temporal.ZonedDateTime, weekday: number): number[] {
-  const out: number[] = [];
-  let cursor = date.with({ month: 1, day: 1 });
-  const year = cursor.year;
-
-  while (cursor.year === year) {
-    if (matchesWeekday(cursor, weekday)) out.push(cursor.dayOfYear);
-    cursor = cursor.add({ days: 1 });
-  }
-
-  return out;
 }
 
 function matchesByWeekdayYearly(date: Temporal.ZonedDateTime, spec: RuleSpec): boolean {
@@ -67,8 +59,10 @@ function matchesByWeekdayYearly(date: Temporal.ZonedDateTime, spec: RuleSpec): b
   return spec.byweekday.some((entry) => {
     if (!matchesWeekday(date, entry.weekday)) return false;
     if (!entry.ordinal) return true;
-    const days = listYearWeekdays(date, entry.weekday);
-    const target = entry.ordinal > 0 ? days[entry.ordinal - 1] : days[days.length + entry.ordinal];
+    const firstDay = date.with({ month: 1, day: 1 });
+    const first = 1 + (entry.weekday + 1 - firstDay.dayOfWeek + 7) % 7;
+    const last = first + 7 * Math.floor((date.daysInYear - first) / 7);
+    const target = entry.ordinal > 0 ? first + 7 * (entry.ordinal - 1) : last + 7 * (entry.ordinal + 1);
     return target === date.dayOfYear;
   });
 }
@@ -170,11 +164,6 @@ function yearlyFirstWeekStart(year: number, sample: Temporal.ZonedDateTime, wkst
     second: sample.second,
     millisecond: sample.millisecond,
   });
-}
-
-function yearlyLastWeekCount(year: number, sample: Temporal.ZonedDateTime): number {
-  const jan1 = sample.with({ year, month: 1, day: 1 });
-  return jan1.dayOfWeek === 4 || (jan1.inLeapYear && jan1.dayOfWeek === 3) ? 53 : 52;
 }
 
 function weekNumber(
@@ -292,7 +281,7 @@ function emitForPeriod(periodBase: Temporal.ZonedDateTime, spec: RuleSpec): Temp
           ? [0, 1, 2, 3, 4, 5, 6]
           : [spec.dtstart.dayOfWeek - 1];
       const weekdays = (spec.byweekday?.length
-        ? spec.byweekday.filter((w) => !w.ordinal).map((w) => w.weekday)
+        ? spec.byweekday.map((w) => w.weekday)
         : inferredWeekdays
       ).sort((a, b) => ((a - spec.wkst + 7) % 7) - ((b - spec.wkst + 7) % 7));
       const candidates = weekdays.flatMap((weekday) => {
@@ -325,13 +314,21 @@ function emitForPeriod(periodBase: Temporal.ZonedDateTime, spec: RuleSpec): Temp
           }
         }
       }
-      if (days.size === 0) days.add(spec.dtstart.day);
+      if (!spec.bymonthday?.length && !spec.byweekday?.length) {
+        // Lenient classic compatibility: these selectors limit the month's
+        // dates instead of inheriting DTSTART's day of month.
+        if (spec.byyearday?.length || spec.byweekno?.length) {
+          for (let day = 1; day <= monthStart.daysInMonth; day++) days.add(day);
+        } else {
+          days.add(spec.dtstart.day);
+        }
+      }
       const candidates = [...days].filter(day => day <= monthStart.daysInMonth).sort((a, b) => a - b).flatMap((day) => expandByTime(monthStart.with({ day }), spec));
       return applyBySetPos(candidates.filter((value) => matches(value, spec)), spec);
     }
     case 'YEARLY': {
       if (spec.byweekno?.length) {
-        const lastWeek = yearlyLastWeekCount(periodBase.year, periodBase);
+        const lastWeek = weeksInYear(periodBase.year, periodBase, spec.wkst);
         const firstWeekStart = yearlyFirstWeekStart(periodBase.year, periodBase, spec.wkst);
         const weekdays = spec.byweekday?.length
           ? spec.byweekday.filter((w) => !w.ordinal).map((w) => w.weekday)
@@ -1403,6 +1400,12 @@ export class RuleSource implements SourceQuery {
       ? null : new CalendarRuleSource(spec);
   }
 
+  /** Stream calendar occurrences without applying all()'s finite preview cap. */
+  *iterate(): Generator<Temporal.ZonedDateTime> {
+    if (this.calendar) yield* this.calendar.iterate();
+    else yield* this.all();
+  }
+
   private allSparseSubdaily(): Temporal.ZonedDateTime[] {
     const out: Temporal.ZonedDateTime[] = [];
     let dayCursor = this.spec.dtstart.with({ hour: 0, minute: 0, second: 0 });
@@ -1705,11 +1708,64 @@ function hasReachableClock(spec: RuleSpec): boolean {
   return false;
 }
 
+// Calendar dates and clock slots form a sorted Cartesian product. Keep the
+// date set small, but materialize only the selected slots, even for a dense
+// yearly rule. Positional ranks belong to the full period, before clipping.
+function *calendarPeriodCandidates(
+  cursor: Temporal.ZonedDateTime,
+  spec: RuleSpec,
+  lower?: Temporal.ZonedDateTime,
+  upper?: Temporal.ZonedDateTime,
+  reverse = false,
+): Generator<Temporal.ZonedDateTime> {
+  const dates = emitForPeriod(cursor, { ...spec, byhour: [0], byminute: [0], bysecond: [0], bysetpos: undefined });
+  const parts = sortedTimeParts(spec);
+  const hours = [...new Set(parts.hours ?? [spec.dtstart.hour])];
+  const minutes = [...new Set(parts.minutes ?? [spec.dtstart.minute])];
+  const seconds = [...new Set(parts.seconds ?? [spec.dtstart.second])];
+  const clock = hours.flatMap(hour => minutes.flatMap(minute => seconds.map(second => hour * 3600 + minute * 60 + second)));
+  const slots = clock.length;
+  if (!slots || !dates.length) return;
+  const size = dates.length * slots;
+  const boundary = (value: Temporal.ZonedDateTime, after: boolean): number => {
+    // Binary search ranks without constructing all of their Temporal values.
+    let lo = 0, hi = size;
+    const day = value.toPlainDate();
+    const time = value.hour * 3600 + value.minute * 60 + value.second;
+    while (lo < hi) {
+      const mid = Math.floor((lo + hi) / 2);
+      const cmp = Temporal.PlainDate.compare(dates[Math.floor(mid / slots)]!.toPlainDate(), day);
+      const delta = cmp || clock[mid % slots]! - time;
+      if (delta < 0 || (after && delta === 0)) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo;
+  };
+  const first = lower ? boundary(lower, false) : 0;
+  const last = upper ? boundary(upper, true) : size;
+  const valueAt = (rank: number) => {
+    const time = clock[rank % slots]!;
+    return dates[Math.floor(rank / slots)]!.with({ hour: Math.floor(time / 3600), minute: Math.floor(time / 60) % 60,
+      second: time % 60, millisecond: spec.dtstart.millisecond, microsecond: spec.dtstart.microsecond,
+      nanosecond: spec.dtstart.nanosecond });
+  };
+  if (spec.bysetpos?.length) {
+    const ranks = [...new Set(spec.bysetpos.map(pos => pos > 0 ? pos - 1 : size + pos))]
+      .filter(rank => rank >= first && rank < last).sort((a, b) => reverse ? b - a : a - b);
+    for (const rank of ranks) yield valueAt(rank);
+  } else if (reverse) {
+    for (let rank = last - 1; rank >= first; rank--) yield valueAt(rank);
+  } else {
+    for (let rank = first; rank < last; rank++) yield valueAt(rank);
+  }
+}
+
 class CalendarRuleSource implements SourceQuery {
   private readonly origin: Temporal.ZonedDateTime;
   private readonly unit: 'years' | 'months' | 'weeks' | 'days' | 'hours' | 'minutes' | 'seconds';
   private readonly subdaily: boolean;
   private readonly reachableClock: boolean;
+  private readonly fixedCount: ElapsedSource | null;
   private cache: Temporal.ZonedDateTime[] | null = null;
 
   constructor(private readonly spec: RuleSpec) {
@@ -1718,6 +1774,15 @@ class CalendarRuleSource implements SourceQuery {
       HOURLY: 'hours', MINUTELY: 'minutes', SECONDLY: 'seconds' } as const)[spec.freq];
     this.subdaily = ['HOURLY', 'MINUTELY', 'SECONDLY'].includes(spec.freq);
     this.reachableClock = hasReachableClock(spec);
+    const seconds = ({ WEEKLY: 604800, DAILY: 86400, HOURLY: 3600, MINUTELY: 60, SECONDLY: 1 } as Partial<Record<RuleSpec['freq'], number>>)[spec.freq];
+    // In UTC, these unfiltered calendar shapes have an exact fixed grid.
+    // COUNT can be ranked directly without visiting their complete history.
+    this.fixedCount = spec.tzid === 'UTC' && spec.dtstart.calendarId === 'iso8601' && spec.count !== undefined && !spec.until && seconds &&
+      Number.isSafeInteger(seconds * spec.interval) && !spec.rscale && spec.byeaster === undefined &&
+      ![spec.byhour, spec.byminute, spec.bysecond, spec.bymonth, spec.bymonthday, spec.byyearday,
+        spec.byweekno, spec.byweekday, spec.bysetpos].some(values => values?.length)
+      ? new ElapsedSource({ start: spec.dtstart.toInstant(), every: `PT${seconds * spec.interval}S`, count: spec.count, tzid: spec.tzid })
+      : null;
   }
 
   private at(index: number): Temporal.ZonedDateTime {
@@ -1725,6 +1790,9 @@ class CalendarRuleSource implements SourceQuery {
   }
 
   private index(value: Temporal.ZonedDateTime): number {
+    if (this.spec.freq === 'YEARLY' && this.spec.byweekno?.length) {
+      return Math.max(0, Math.floor((weekNumber(value, this.spec.wkst).weekYear - this.origin.year) / this.spec.interval));
+    }
     const difference = this.origin.until(value, { largestUnit: this.unit });
     const amount = this.unit === 'weeks' ? difference.weeks : difference[this.unit];
     return Math.max(0, Math.floor(amount / this.spec.interval));
@@ -1732,6 +1800,9 @@ class CalendarRuleSource implements SourceQuery {
 
   private floor(value: Temporal.ZonedDateTime): Temporal.ZonedDateTime {
     const zero = { millisecond: 0, microsecond: 0, nanosecond: 0 };
+    if (this.spec.freq === 'YEARLY' && this.spec.byweekno?.length) {
+      return yearlyFirstWeekStart(value.year, value, this.spec.wkst).with({ ...zero, hour: 0, minute: 0, second: 0 });
+    }
     if (this.spec.freq === 'SECONDLY') return value.with(zero);
     if (this.spec.freq === 'MINUTELY') return value.with({ ...zero, second: 0 });
     if (this.spec.freq === 'HOURLY') return value.with({ ...zero, minute: 0, second: 0 });
@@ -1756,7 +1827,7 @@ class CalendarRuleSource implements SourceQuery {
     return result;
   }
 
-  private *values(from = 0, upper?: Temporal.Instant): Generator<Temporal.ZonedDateTime> {
+  private *values(from = 0, upper?: Temporal.Instant, lower?: Temporal.ZonedDateTime): Generator<Temporal.ZonedDateTime> {
     if (this.spec.count === 0 || !this.reachableClock) return;
     const end = upper && this.spec.until
       ? (Temporal.Instant.compare(upper, this.spec.until.toInstant()) < 0 ? upper : this.spec.until.toInstant())
@@ -1768,22 +1839,26 @@ class CalendarRuleSource implements SourceQuery {
     let index = from;
     let attempts = 0;
     let skippedDays = 0;
+    const spec = this.spec;
+    function *drain(): Generator<Temporal.ZonedDateTime> {
+      for (const candidate of dedupeByInstant(pending)) {
+        const stamp = candidate.epochNanoseconds;
+        if (stamp === last || stamp < spec.dtstart.epochNanoseconds || (end && stamp > end.epochNanoseconds)) continue;
+        last = stamp;
+        attempts = 0;
+        skippedDays = 0;
+        yield candidate;
+      }
+      pending = [];
+      bufferUntil = null;
+    }
 
     while (attempts++ < (needsWideSearch(this.spec) ? 1_000_000 : 10_000) || bufferUntil) {
       const cursor = this.at(index);
       const floor = this.floor(cursor);
       const done = nominalEnd && Temporal.ZonedDateTime.compare(floor, nominalEnd) > 0;
       if (pending.length && (done || !bufferUntil || Temporal.ZonedDateTime.compare(floor, bufferUntil) > 0)) {
-        for (const candidate of dedupeByInstant(pending)) {
-          const stamp = candidate.epochNanoseconds;
-          if (stamp === last || stamp < this.spec.dtstart.epochNanoseconds || (end && stamp > end.epochNanoseconds)) continue;
-          last = stamp;
-          attempts = 0;
-          skippedDays = 0;
-          yield candidate;
-        }
-        pending = [];
-        bufferUntil = null;
+        yield* drain();
       }
       if (done) return;
 
@@ -1809,8 +1884,9 @@ class CalendarRuleSource implements SourceQuery {
       }
       const candidates = this.subdaily
         ? applyBySetPos(subdailyCandidatesForPeriod(cursor, this.spec).filter(value => matches(value, this.spec) && matchesTimeSelectors(value, this.spec)).sort(compareByInstant), this.spec)
-        : emitForPeriod(cursor, this.spec);
+        : calendarPeriodCandidates(cursor, this.spec, lower, nominalEnd);
       for (const candidate of candidates) {
+        if (pending.length && (!bufferUntil || Temporal.ZonedDateTime.compare(candidate, bufferUntil) > 0)) yield* drain();
         const resolved = candidate.toPlainDateTime().toZonedDateTime(this.spec.tzid, { disambiguation: 'compatible' });
         const resolvedWall = nominal(resolved);
         if (Temporal.ZonedDateTime.compare(resolvedWall, candidate) > 0 &&
@@ -1836,18 +1912,33 @@ class CalendarRuleSource implements SourceQuery {
     return this.cache = out;
   }
 
+  *iterate(): Generator<Temporal.ZonedDateTime> {
+    let count = 0;
+    if (this.spec.count === 0) return;
+    for (const value of this.values()) {
+      yield value;
+      if (++count >= (this.spec.count ?? Infinity)) return;
+    }
+  }
+
   between(after: Temporal.Instant, before: Temporal.Instant, inc: boolean): Temporal.ZonedDateTime[] {
+    if (this.fixedCount) return this.fixedCount.between(after, before, inc);
     if (Temporal.Instant.compare(after, before) > 0) return [];
-    const values = this.spec.count !== undefined ? this.all() : this.values(this.index(this.queryNominal(after, false)), before);
-    return Array.from(values).filter(value => {
+    const lower = this.queryNominal(after, false);
+    const values = this.spec.count !== undefined ? this.cache ?? this.iterate() : this.values(this.index(lower), before, lower);
+    const out: Temporal.ZonedDateTime[] = [];
+    for (const value of values) {
       const stamp = value.epochNanoseconds;
-      return (inc ? stamp >= after.epochNanoseconds : stamp > after.epochNanoseconds) &&
-        (inc ? stamp <= before.epochNanoseconds : stamp < before.epochNanoseconds);
-    });
+      if (inc ? stamp > before.epochNanoseconds : stamp >= before.epochNanoseconds) break;
+      if (inc ? stamp >= after.epochNanoseconds : stamp > after.epochNanoseconds) out.push(value);
+    }
+    return out;
   }
 
   after(after: Temporal.Instant, inc: boolean): Temporal.ZonedDateTime | null {
-    const values = this.spec.count !== undefined ? this.all() : this.values(this.index(this.queryNominal(after, false)));
+    if (this.fixedCount) return this.fixedCount.after(after, inc);
+    const lower = this.queryNominal(after, false);
+    const values = this.spec.count !== undefined ? this.cache ?? this.iterate() : this.values(this.index(lower), undefined, lower);
     for (const value of values) {
       if (inc ? value.epochNanoseconds >= after.epochNanoseconds : value.epochNanoseconds > after.epochNanoseconds) return value;
     }
@@ -1855,13 +1946,32 @@ class CalendarRuleSource implements SourceQuery {
   }
 
   before(before: Temporal.Instant, inc: boolean): Temporal.ZonedDateTime | null {
+    if (this.fixedCount) return this.fixedCount.before(before, inc);
     if (!this.reachableClock) return null;
     if (this.spec.count !== undefined) {
-      return this.all().filter(value => inc ? value.epochNanoseconds <= before.epochNanoseconds : value.epochNanoseconds < before.epochNanoseconds).at(-1) ?? null;
+      let result: Temporal.ZonedDateTime | null = null;
+      for (const value of this.cache ?? this.iterate()) {
+        if (inc ? value.epochNanoseconds > before.epochNanoseconds : value.epochNanoseconds >= before.epochNanoseconds) break;
+        result = value;
+      }
+      return result;
     }
     if (this.spec.until && before.epochNanoseconds > this.spec.until.epochNanoseconds) {
       before = this.spec.until.toInstant();
       inc = true;
+    }
+    // Fixed UTC calendar periods can be selected backward directly. This also
+    // avoids visiting a dense year's earlier clock slots for a point query.
+    if (!this.subdaily && this.spec.tzid === 'UTC') {
+      const upper = this.queryNominal(before, true);
+      for (let index = this.index(upper), attempts = 0; index >= 0; index--, attempts++) {
+        if (attempts >= 10_000) throw new RecurrenceSearchLimitError();
+        for (const value of calendarPeriodCandidates(this.at(index), this.spec, undefined, upper, true)) {
+          if (value.epochNanoseconds < this.spec.dtstart.epochNanoseconds) return null;
+          if (inc ? value.epochNanoseconds <= before.epochNanoseconds : value.epochNanoseconds < before.epochNanoseconds) return value;
+        }
+      }
+      return null;
     }
     const end = this.index(this.queryNominal(before, true));
     let width = 1;

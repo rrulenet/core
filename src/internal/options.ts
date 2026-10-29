@@ -5,6 +5,8 @@ import type { Weekday, WeekdayStr } from './weekday.ts';
  */
 export interface QueryMethods {
   all(iterator?: (date: Date, index: number) => boolean): Date[];
+  /** Optional ordered stream for lazy set composition. */
+  iterate?(): IterableIterator<Date>;
   between(after: Date, before: Date, inc?: boolean, iterator?: (date: Date, index: number) => boolean): Date[];
   before(date: Date, inc?: boolean): Date | null;
   after(date: Date, inc?: boolean): Date | null;

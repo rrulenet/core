@@ -4,6 +4,7 @@ import { datetime } from './dateutil.ts';
 import { Frequency, type Options, type Skip } from './options.ts';
 import { Weekday } from './weekday.ts';
 import { validateRuleSelectors } from './validateSelectors.ts';
+import { parseContentLine } from './contentLine.ts';
 
 function unfoldLines(input: string): string[] {
   return input
@@ -100,11 +101,17 @@ function parseIntegerList(value: string, field: string): number[] {
 }
 
 function parseDtstartToken(token: string, result: Partial<Options>) {
-  const match = /^DTSTART(?:;VALUE=DATE)?(?:;TZID=([^:=;]+))?(?::|=)([^;]+)$/i.exec(token);
-  if (!match) return false;
-  const tzid = match[1];
+  // Retain the historical DTSTART= form used inside a classic rule string.
+  token = token.replace(/^DTSTART=/i, 'DTSTART:');
+  if (!token.includes(':')) token = token.replace(/=([^;=]+)$/, ':$1');
+  const { name, parameters, value } = parseContentLine(token);
+  if (name !== 'DTSTART') return false;
+  for (const [key, value] of parameters) {
+    if (key !== 'TZID' && (key !== 'VALUE' || !['DATE', 'DATE-TIME'].includes(value.toUpperCase()))) return false;
+  }
+  const tzid = parameters.get('TZID');
   result.tzid = tzid ?? 'UTC';
-  result.dtstart = parseCompactDateTime(match[2]!, result.tzid);
+  result.dtstart = parseCompactDateTime(value, result.tzid);
   return true;
 }
 
@@ -188,6 +195,7 @@ export function parseRuleString(input: string): Partial<Options> {
           result.bysecond = parseIntegerList(rawValue, 'BYSECOND');
           break;
         case 'BYDAY':
+        case 'BYWEEKDAY':
           result.byweekday = rawValue.split(',').map((token) => {
             const weekday = parseWeekdayToken(token.toUpperCase());
             if (!weekday) throw new SyntaxError(`Invalid weekday string: ${token}`);

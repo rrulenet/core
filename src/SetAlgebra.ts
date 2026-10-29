@@ -24,6 +24,12 @@ export class QueryMethodsSource implements SourceQuery {
     return this.query.all().map((date) => dateToZdt(date, 'UTC'));
   }
 
+  *iterate(): Generator<Temporal.ZonedDateTime> {
+    for (const date of this.query.iterate?.() ?? this.query.all().slice().sort((a, b) => a.getTime() - b.getTime())) {
+      yield dateToZdt(date, 'UTC');
+    }
+  }
+
   between(after: Temporal.Instant, before: Temporal.Instant, inc: boolean): Temporal.ZonedDateTime[] {
     return this.query
       .between(new Date(Number(after.epochMilliseconds)), new Date(Number(before.epochMilliseconds)), inc)
@@ -116,6 +122,10 @@ export class SetAlgebra implements QueryMethods {
 
   all(): Date[] {
     return new SetEngine(this.expression).all().map(zdtToDate);
+  }
+
+  *iterate(): Generator<Date> {
+    for (const value of new SetEngine(this.expression).iterate()) yield zdtToDate(value);
   }
 
   between(after: Date, before: Date, inc = false): Date[] {

@@ -2,6 +2,7 @@ import { Temporal } from 'temporal-polyfill';
 
 import { parseRuleString } from './internal/parse.ts';
 import type { Options } from './internal/options.ts';
+import { parseContentLine } from './internal/contentLine.ts';
 
 /**
  * Options accepted by the low-level RFC string parser.
@@ -65,9 +66,8 @@ function splitIntoLines(input: string, unfold = false): string[] {
 }
 
 function parseDateList(line: string, defaultTzid: string): Date[] {
-  const [header, body = ''] = line.split(':');
-  const tzidMatch = header?.match(/TZID=([^;:]+)/i);
-  const tzid = tzidMatch?.[1] ?? defaultTzid;
+  const { parameters, value: body } = parseContentLine(line);
+  const tzid = parameters.get('TZID') ?? defaultTzid;
 
   return body
     .split(',')
@@ -102,16 +102,15 @@ function parseDateList(line: string, defaultTzid: string): Date[] {
 }
 
 function parseDtstartMeta(line: string): { tzid?: string; date?: Date } {
-  const [header, body = ''] = line.split(':');
-  const tzidMatch = header?.match(/TZID=([^;:]+)/i);
-  const tzid = tzidMatch?.[1];
+  const tzid = extractLineTzid(line);
   const options = parseRuleString(line);
   return { tzid, date: options.dtstart ?? undefined };
 }
 
 function extractLineTzid(line: string): string | undefined {
-  const [header = ''] = line.split(':');
-  return header.match(/TZID=([^;:]+)/i)?.[1];
+  // DTSTART= is a classic compatibility form without content-line parameters.
+  if (/^DTSTART=/i.test(line)) return undefined;
+  return parseContentLine(line).parameters.get('TZID');
 }
 
 function initializeOptions(options: Partial<RRuleStrOptions>): RRuleStrOptions {

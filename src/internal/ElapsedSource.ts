@@ -87,6 +87,14 @@ export class ElapsedSource implements SourceQuery {
     return out;
   }
 
+  *iterate(): Generator<Temporal.ZonedDateTime> {
+    for (let index = 0n; ; index++) {
+      const value = this.value(index);
+      if (!value) return;
+      yield value;
+    }
+  }
+
   toTextDescription(): string {
     return `every ${this.spec.every} elapsed from ${this.spec.start.toString()}`;
   }

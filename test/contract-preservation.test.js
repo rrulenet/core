@@ -49,13 +49,16 @@ function checkQueries(source, expected, start) {
 test('cold, cached and streamed calendar queries preserve the nominal contract against an independent model', () => {
   const starts = [
     '2026-03-27T01:15:00.123456789[Europe/Paris]',
+    '2026-03-29T03:15:00.123456789[Europe/Paris]',
     '2026-10-23T01:15:00.123456789[Europe/Paris]',
     '2026-10-25T02:15:00.123456789+01:00[Europe/Paris]',
     '2026-03-06T01:15:00.123456789[America/New_York]',
     '2026-10-30T01:15:00.123456789[America/New_York]',
     '2026-10-02T01:15:00.123456789[Australia/Lord_Howe]',
+    '2026-10-04T02:45:00.123456789[Australia/Lord_Howe]',
     '2026-04-03T01:15:00.123456789[Australia/Lord_Howe]',
     '2011-12-28T01:15:00.123456789[Pacific/Apia]',
+    '2011-12-31T00:15:00.123456789[Pacific/Apia]',
   ];
   for (const start of starts) {
     for (let variant = 0; variant < 4; variant++) {

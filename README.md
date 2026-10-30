@@ -34,15 +34,12 @@
   <sub><strong>@rrulenet/rrule</strong>: classic API · <strong>@rrulenet/recurrence</strong>: Temporal-first API · <strong>@rrulenet/core</strong>: engine · <strong>@rrulenet/cli</strong>: workflows</sub>
 </p>
 
-`@rrulenet/core` provides the shared engine in the ecosystem. It is intended to be consumed by the public packages rather than directly by most applications.
-
-Use `@rrulenet/core` when you are building on top of the engine itself. Use `@rrulenet/rrule` for the classic class-based compat API, and use `@rrulenet/recurrence` for the Temporal-first public API.
-
-## Table of Contents
-
-- [Install](#install)
-- [Role in the Ecosystem](#role-in-the-ecosystem)
-- [Notes](#notes)
+`@rrulenet/core` provides the shared recurrence engine for the `@rrulenet`
+ecosystem. Use it when building a recurrence adapter or working directly with
+engine sources. For application code, choose
+[`@rrulenet/rrule`](https://github.com/rrulenet/rrule) for the classic `Date` API
+or [`@rrulenet/recurrence`](https://github.com/rrulenet/recurrence) for the
+Temporal-first API.
 
 ## Install
 
@@ -50,98 +47,31 @@ Use `@rrulenet/core` when you are building on top of the engine itself. Use `@rr
 npm install @rrulenet/core
 ```
 
-## Role in the Ecosystem
+Requires Node.js 20 or later when used with Node. The engine uses native
+Temporal where available and the included polyfill otherwise.
 
-`@rrulenet/core` owns the shared recurrence engine:
-- RFC-style parsing helpers
-- timezone-aware occurrence expansion
-- set algebra and querying
-- text rendering primitives
+## Public entry points
 
-Most applications should not import it directly. It is the package that powers the public APIs exposed by `@rrulenet/rrule`, `@rrulenet/recurrence`, and the workflows exposed through `@rrulenet/cli`.
+| Import | Purpose |
+| --- | --- |
+| `@rrulenet/core` | Parsing and shared recurrence APIs |
+| `@rrulenet/core/engine` | `RuleSource`, `ElapsedSource`, `DateSource` and `SetEngine` |
+| `@rrulenet/core/rule` | Rule types and helpers |
+| `@rrulenet/core/options` | Rule options |
+| `@rrulenet/core/time` | Date and Temporal conversion helpers |
+| `@rrulenet/core/text` | Natural-language rendering |
 
-## Temporal sources (0.2.0)
+## Temporal behavior
 
-`RuleSource` advances nominal calendar values for every supported RFC frequency,
-including HOURLY, MINUTELY, and SECONDLY. Ambiguous local times use the first
-passage. Nonexistent times use the pre-transition offset, following RFC 5545's
-verified erratum 4271; subsequent periods keep the nominal clock time. Resolved
-collisions are sorted and deduplicated before COUNT. UNTIL is inclusive and
-cannot be combined with COUNT. Invalid base-calendar dates are omitted;
-RSCALE/SKIP keeps its extension policies.
+Calendar rules follow local calendar dates and clock values. Elapsed sources
+follow an exact anchor and fixed duration; explicit dates retain their instants.
+Calendar overlaps select the first passage, while spring gaps use the
+pre-transition offset. COUNT applies before explicit dates and exclusions.
 
-`ElapsedSource`, exported from `@rrulenet/core/engine`, instead calculates
-`start + n * every` on the instant timeline. Its spec requires an exact `start`
-and an ISO time duration (`PT30M`, for example), with optional `tzid`, `count`,
-or `until`. Steps must be positive whole seconds; exact anchors retain their
-precision. The timezone only controls presentation. Most applications should
-use `Recurrence.elapsed` from the public recurrence package.
+Unbounded `all()` returns a finite preview. Use bounded queries, directional
+queries, or ordered iteration when you need more of the series. An error with
+code `RECURRENCE_SEARCH_LIMIT` means the query could not establish completeness;
+it does not prove that the schedule is empty.
 
-RFC export rejects precision or a local DTSTART boundary it cannot preserve.
-UNTIL is serialized in UTC. Unbounded source `all()` retains the existing finite
-preview convention (513 values); use bounded or directional queries for other
-parts of an unbounded series.
-
-`RuleSource.iterate()`, `ElapsedSource.iterate()`, and `SetEngine.iterate()`
-provide ordered streams for callers that stop early. Calendar period expansion
-selects date/time ranks without materializing a dense year's full Cartesian
-product. RRULE COUNT applies before explicit dates and exclusions. Dedicated
-RSCALE month/year sources and custom sources without `iterate()` retain their
-existing materialized traversal.
-
-## Selector validation
-
-Rule options and RFC parsing reject invalid `BYHOUR`, `BYMINUTE`, `BYSECOND`,
-`BYMONTH`, and `BYMONTHDAY` values with a `RangeError` identifying the field
-and offending value. Mixed valid/invalid lists are rejected as a whole.
-The `bynmonthday` compatibility alias is validated too. This replaces silent
-filtering of invalid members; valid negative month days and supported RSCALE
-leap-month tokens remain accepted.
-
-`BYSECOND=60` uses RFC 5545's fallback to second 59. Resulting collisions are
-deduplicated before BYSETPOS and COUNT, while serialization retains the original
-selector. Valid selectors that generate nonexistent calendar dates, such as day
-31 in February, keep their existing omission or explicit RSCALE/SKIP behavior.
-
-Repeated `BYHOUR`, `BYMINUTE`, and `BYSECOND` members represent one candidate
-value during expansion. They do not shift BYSETPOS positions or consume COUNT;
-the original lists remain available for serialization.
-
-Positional selection uses the distinct chronological candidates of the whole
-frequency interval. For example, a yearly rule spanning several months applies
-BYSETPOS after expanding every selected month. Overlapping positive/negative
-selectors and repeated days or weeks do not occupy additional positions.
-
-Numeric RFC tokens must be decimal integers. Empty list members, hexadecimal
-values, exponent notation, fractional tokens, and unsafe integers are rejected
-before conversion, rather than silently changing a selector.
-
-## Search completeness
-
-Calendar-clock queries detect unreachable subdaily clock phases without moving
-DTSTART or relaxing filters. A proven impossible phase produces an empty result.
-If the calendar search exhausts its candidate budget without establishing
-completeness, it throws `RecurrenceSearchLimitError` (exported from the package
-root and `/engine`), with code `RECURRENCE_SEARCH_LIMIT`. Do not interpret that
-error as proof that a schedule has no further occurrences. Dedicated RSCALE
-month/year expansion retains its separately bounded search implementation.
-
-Directional set queries search relative to their boundary instead of using the
-finite `all()` preview. Streaming filters and directional set searches also
-throw `RecurrenceSearchLimitError` if their search budget is exhausted.
-
-## Reliability checks
-
-`npm test` includes deterministic generated UTC rules checked against an
-independent bounded reference, selector duplicate/order invariants, and query
-consistency. `npm run test:reliability` runs the focused reliability suites.
-Use `RRULENET_TEST_SEED` and `RRULENET_TEST_CASES` to reproduce or expand a run.
-Failures report the seed, case index, and a reduced rule. The reference covers
-the tested Gregorian UTC subset; timezone and non-ISO calendar fixtures are
-verified separately.
-
-## Notes
-
-- `@rrulenet/core` owns the engine implementation.
-- `@rrulenet/rrule` and `@rrulenet/recurrence` are the public API façades.
-- `@rrulenet/cli` should consume the public APIs rather than deep engine internals.
+See the [engine reference](https://github.com/rrulenet/core/blob/main/docs/API.md)
+for source contracts, selector validation and search behavior.

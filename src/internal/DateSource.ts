@@ -15,12 +15,12 @@ export class DateSource implements SourceQuery {
     this.dates = [...dates].sort(compareByInstant);
   }
 
-  all(budget = new CandidateBudget()): Temporal.ZonedDateTime[] {
+  all(budget: CandidateBudget = new CandidateBudget()): Temporal.ZonedDateTime[] {
     budget.spend(this.dates.length);
     return this.dates.slice();
   }
 
-  *iterate(budget = new CandidateBudget()): Generator<Temporal.ZonedDateTime> {
+  *iterate(budget: CandidateBudget = new CandidateBudget()): Generator<Temporal.ZonedDateTime> {
     for (const date of this.dates) {
       budget.spend();
       yield date;
@@ -39,7 +39,7 @@ export class DateSource implements SourceQuery {
     return lo;
   }
 
-  between(after: Temporal.Instant, before: Temporal.Instant, inc: boolean, budget = new CandidateBudget()): Temporal.ZonedDateTime[] {
+  between(after: Temporal.Instant, before: Temporal.Instant, inc: boolean, budget: CandidateBudget = new CandidateBudget()): Temporal.ZonedDateTime[] {
     const first = this.boundary(after, !inc);
     const end = this.boundary(before, inc);
     if (end <= first) return [];
@@ -47,7 +47,7 @@ export class DateSource implements SourceQuery {
     return this.dates.slice(first, end);
   }
 
-  *iterateWindow({ after, before, inc }: QueryWindow, budget = new CandidateBudget()): Generator<Temporal.ZonedDateTime> {
+  *iterateWindow({ after, before, inc }: QueryWindow, budget: CandidateBudget = new CandidateBudget()): Generator<Temporal.ZonedDateTime> {
     const end = before ? this.boundary(before, inc) : this.dates.length;
     for (let index = this.boundary(after, !inc); index < end; index++) {
       budget.spend();

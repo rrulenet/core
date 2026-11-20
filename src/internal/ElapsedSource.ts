@@ -81,12 +81,12 @@ export class ElapsedSource implements SourceQuery {
     return out;
   }
 
-  between(after: Temporal.Instant, before: Temporal.Instant, inc: boolean, budget = new CandidateBudget()): Temporal.ZonedDateTime[] {
+  between(after: Temporal.Instant, before: Temporal.Instant, inc: boolean, budget: CandidateBudget = new CandidateBudget()): Temporal.ZonedDateTime[] {
     return this.range(this.firstIndex(after.epochNanoseconds + (inc ? 0n : 1n)),
       this.lastIndex(before.epochNanoseconds - (inc ? 0n : 1n)), budget);
   }
 
-  *iterateWindow({ after, before, inc }: QueryWindow, budget = new CandidateBudget()): Generator<Temporal.ZonedDateTime> {
+  *iterateWindow({ after, before, inc }: QueryWindow, budget: CandidateBudget = new CandidateBudget()): Generator<Temporal.ZonedDateTime> {
     const last = this.lastIndex(before ? before.epochNanoseconds - (inc ? 0n : 1n) : MAX_INSTANT);
     for (let index = this.firstIndex(after.epochNanoseconds + (inc ? 0n : 1n)); index <= last; index++) {
       budget.spend();
@@ -98,13 +98,13 @@ export class ElapsedSource implements SourceQuery {
     return this.after(instant, true, budget)?.epochNanoseconds === instant.epochNanoseconds;
   }
 
-  all(budget = new CandidateBudget()): Temporal.ZonedDateTime[] {
+  all(budget: CandidateBudget = new CandidateBudget()): Temporal.ZonedDateTime[] {
     let last = this.lastIndex(MAX_INSTANT);
     if (this.spec.count === undefined && !this.spec.until && last > 512n) last = 512n;
     return this.range(0n, last, budget);
   }
 
-  *iterate(budget = new CandidateBudget()): Generator<Temporal.ZonedDateTime> {
+  *iterate(budget: CandidateBudget = new CandidateBudget()): Generator<Temporal.ZonedDateTime> {
     for (let index = 0n; ; index++) {
       const value = this.value(index);
       if (!value) return;

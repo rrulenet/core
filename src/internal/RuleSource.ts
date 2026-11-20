@@ -1424,7 +1424,7 @@ export class RuleSource implements SourceQuery {
   }
 
   /** Stream calendar occurrences without applying all()'s finite preview cap. */
-  *iterate(budget = new CandidateBudget()): Generator<Temporal.ZonedDateTime> {
+  *iterate(budget: CandidateBudget = new CandidateBudget()): Generator<Temporal.ZonedDateTime> {
     if (this.calendar) yield* this.calendar.iterate(budget);
     else yield* this.all(budget);
   }
@@ -1469,7 +1469,7 @@ export class RuleSource implements SourceQuery {
     return dedupeSortedByInstant(out);
   }
 
-  all(budget = new CandidateBudget()): Temporal.ZonedDateTime[] {
+  all(budget: CandidateBudget = new CandidateBudget()): Temporal.ZonedDateTime[] {
     if (this.calendar) return this.calendar.all(budget);
     if (this.allCache) {
       budget.spend(this.allCache.length);
@@ -1642,7 +1642,7 @@ export class RuleSource implements SourceQuery {
     return result;
   }
 
-  between(after: Temporal.Instant, before: Temporal.Instant, inc: boolean, budget = new CandidateBudget()): Temporal.ZonedDateTime[] {
+  between(after: Temporal.Instant, before: Temporal.Instant, inc: boolean, budget: CandidateBudget = new CandidateBudget()): Temporal.ZonedDateTime[] {
     if (this.calendar) return this.calendar.between(after, before, inc, budget);
     if (hasSimpleOpenEndedCadence(this.spec)) {
       return simpleCadenceBetween(this.spec, after, before, inc);
@@ -1658,11 +1658,11 @@ export class RuleSource implements SourceQuery {
     });
   }
 
-  iterateWindow(window: QueryWindow, budget = new CandidateBudget()): Generator<Temporal.ZonedDateTime> {
+  iterateWindow(window: QueryWindow, budget: CandidateBudget = new CandidateBudget()): Generator<Temporal.ZonedDateTime> {
     return this.calendar?.iterateWindow(window, budget) ?? iterateWindowWithQueries(this, window, budget);
   }
 
-  after(after: Temporal.Instant, inc: boolean, budget = new CandidateBudget()): Temporal.ZonedDateTime | null {
+  after(after: Temporal.Instant, inc: boolean, budget: CandidateBudget = new CandidateBudget()): Temporal.ZonedDateTime | null {
     if (this.calendar) return this.calendar.after(after, inc, budget);
     if (hasSimpleOpenEndedCadence(this.spec)) {
       return simpleCadenceAfter(this.spec, after, inc);
@@ -1679,7 +1679,7 @@ export class RuleSource implements SourceQuery {
     }) ?? null;
   }
 
-  before(before: Temporal.Instant, inc: boolean, budget = new CandidateBudget()): Temporal.ZonedDateTime | null {
+  before(before: Temporal.Instant, inc: boolean, budget: CandidateBudget = new CandidateBudget()): Temporal.ZonedDateTime | null {
     if (this.calendar) return this.calendar.before(before, inc, budget);
     if (hasSimpleOpenEndedCadence(this.spec)) {
       return simpleCadenceBefore(this.spec, before, inc);
@@ -1691,7 +1691,7 @@ export class RuleSource implements SourceQuery {
     return values.length ? values[values.length - 1]! : null;
   }
 
-  occursAt(instant: Temporal.Instant, budget = new CandidateBudget()): boolean {
+  occursAt(instant: Temporal.Instant, budget: CandidateBudget = new CandidateBudget()): boolean {
     if (this.calendar) return this.calendar.occursAt(instant, budget);
     if (this.spec.count !== undefined) {
       return this.all(budget).some((date) => Temporal.Instant.compare(date.toInstant(), instant) === 0);

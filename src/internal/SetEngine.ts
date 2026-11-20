@@ -319,7 +319,7 @@ export class SetEngine {
     return evaluateBetween(this.expression, after, before, inc, new CandidateBudget(this.maxCandidateEvaluations));
   }
 
-  after(after: Temporal.Instant, inc: boolean, budget = new CandidateBudget(this.maxCandidateEvaluations)): Temporal.ZonedDateTime | null {
+  after(after: Temporal.Instant, inc: boolean, budget: CandidateBudget = new CandidateBudget(this.maxCandidateEvaluations)): Temporal.ZonedDateTime | null {
     return evaluateAfter(this.expression, after, inc, budget);
   }
 

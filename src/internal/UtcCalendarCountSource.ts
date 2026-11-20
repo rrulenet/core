@@ -120,12 +120,12 @@ export class UtcCalendarCountSource implements SourceQuery {
     return out;
   }
 
-  between(after: Temporal.Instant, before: Temporal.Instant, inc: boolean, budget = new CandidateBudget()): Temporal.ZonedDateTime[] {
+  between(after: Temporal.Instant, before: Temporal.Instant, inc: boolean, budget: CandidateBudget = new CandidateBudget()): Temporal.ZonedDateTime[] {
     return this.range(this.firstIndex(after.epochNanoseconds + (inc ? 0n : 1n)),
       this.firstIndex(before.epochNanoseconds + (inc ? 1n : 0n)), budget);
   }
 
-  *iterateWindow({ after, before, inc }: QueryWindow, budget = new CandidateBudget()): Generator<Temporal.ZonedDateTime> {
+  *iterateWindow({ after, before, inc }: QueryWindow, budget: CandidateBudget = new CandidateBudget()): Generator<Temporal.ZonedDateTime> {
     let index = this.firstIndex(after.epochNanoseconds + (inc ? 0n : 1n));
     if (index < this.first) index = this.first;
     const end = before ? this.firstIndex(before.epochNanoseconds + (inc ? 1n : 0n)) : this.end;
@@ -135,11 +135,11 @@ export class UtcCalendarCountSource implements SourceQuery {
     }
   }
 
-  all(budget = new CandidateBudget()): Temporal.ZonedDateTime[] {
+  all(budget: CandidateBudget = new CandidateBudget()): Temporal.ZonedDateTime[] {
     return this.range(this.first, this.end, budget);
   }
 
-  *iterate(budget = new CandidateBudget()): Generator<Temporal.ZonedDateTime> {
+  *iterate(budget: CandidateBudget = new CandidateBudget()): Generator<Temporal.ZonedDateTime> {
     for (let index = this.first; index < this.end; index++) {
       budget.spend();
       yield this.at(index);

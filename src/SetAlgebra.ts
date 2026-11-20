@@ -22,14 +22,14 @@ type TextQueryMethods = QueryMethods & {
 export class QueryMethodsSource implements SourceQuery {
   constructor(private readonly query: QueryMethods, private readonly source?: SourceQuery) {}
 
-  all(budget = new CandidateBudget()): Temporal.ZonedDateTime[] {
+  all(budget: CandidateBudget = new CandidateBudget()): Temporal.ZonedDateTime[] {
     if (this.source) return this.source.all(budget);
     const values = this.query.all();
     budget.spend(values.length);
     return values.map((date) => dateToZdt(date, 'UTC'));
   }
 
-  *iterate(budget = new CandidateBudget()): Generator<Temporal.ZonedDateTime> {
+  *iterate(budget: CandidateBudget = new CandidateBudget()): Generator<Temporal.ZonedDateTime> {
     if (this.source) {
       yield* this.source.iterate?.(budget) ?? this.source.all(budget);
       return;
@@ -40,14 +40,14 @@ export class QueryMethodsSource implements SourceQuery {
     }
   }
 
-  between(after: Temporal.Instant, before: Temporal.Instant, inc: boolean, budget = new CandidateBudget()): Temporal.ZonedDateTime[] {
+  between(after: Temporal.Instant, before: Temporal.Instant, inc: boolean, budget: CandidateBudget = new CandidateBudget()): Temporal.ZonedDateTime[] {
     if (this.source) return this.source.between(after, before, inc, budget);
     const values = this.query.between(new Date(after.epochMilliseconds), new Date(before.epochMilliseconds), inc);
     budget.spend(values.length);
     return values.map((date) => dateToZdt(date, 'UTC'));
   }
 
-  iterateWindow(window: QueryWindow, budget = new CandidateBudget()): IterableIterator<Temporal.ZonedDateTime> {
+  iterateWindow(window: QueryWindow, budget: CandidateBudget = new CandidateBudget()): IterableIterator<Temporal.ZonedDateTime> {
     return this.source?.iterateWindow?.(window, budget) ?? iterateWindowWithQueries(this, window, budget);
   }
 

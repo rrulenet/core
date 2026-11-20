@@ -1,5 +1,8 @@
 import { Temporal } from 'temporal-polyfill';
-import type { SourceQuery } from './spec.ts';
+import type { QueryWindow, SourceQuery } from './spec.ts';
+import { CandidateBudget } from './SearchLimitError.ts';
+
+const MAX_INSTANT = 8_640_000_000_000_000_000_000n;
 
 export interface ElapsedSpec {
   start: Temporal.Instant;
@@ -41,56 +44,71 @@ export class ElapsedSource implements SourceQuery {
     if (index < 0n || (this.spec.count !== undefined && index >= BigInt(this.spec.count))) return null;
     const stamp = this.spec.start.epochNanoseconds + index * this.step;
     if (this.spec.until && stamp > this.spec.until.epochNanoseconds) return null;
-    if (stamp > 8_640_000_000_000_000_000_000n) return null;
+    if (stamp > MAX_INSTANT) return null;
     return Temporal.Instant.fromEpochNanoseconds(stamp).toZonedDateTimeISO(this.zone);
   }
 
-  after(after: Temporal.Instant, inc: boolean): Temporal.ZonedDateTime | null {
-    const distance = after.epochNanoseconds - this.spec.start.epochNanoseconds;
-    if (distance < 0n) return this.value(0n);
-    const index = distance / this.step + (inc && distance % this.step === 0n ? 0n : 1n);
-    return this.value(index);
+  private firstIndex(stamp: bigint): bigint {
+    const distance = stamp - this.spec.start.epochNanoseconds;
+    return distance <= 0n ? 0n : (distance + this.step - 1n) / this.step;
   }
 
-  before(before: Temporal.Instant, inc: boolean): Temporal.ZonedDateTime | null {
-    let stamp = before.epochNanoseconds - (inc ? 0n : 1n);
+  private lastIndex(stamp: bigint): bigint {
     if (this.spec.until && stamp > this.spec.until.epochNanoseconds) stamp = this.spec.until.epochNanoseconds;
     const distance = stamp - this.spec.start.epochNanoseconds;
-    if (distance < 0n || this.spec.count === 0) return null;
-    let index = distance / this.step;
-    if (this.spec.count !== undefined && index >= BigInt(this.spec.count)) index = BigInt(this.spec.count - 1);
-    return this.value(index);
+    if (distance < 0n || this.spec.count === 0) return -1n;
+    const index = distance / this.step;
+    return this.spec.count !== undefined && index >= BigInt(this.spec.count) ? BigInt(this.spec.count - 1) : index;
   }
 
-  between(after: Temporal.Instant, before: Temporal.Instant, inc: boolean): Temporal.ZonedDateTime[] {
+  after(after: Temporal.Instant, inc: boolean, budget?: CandidateBudget): Temporal.ZonedDateTime | null {
+    const value = this.value(this.firstIndex(after.epochNanoseconds + (inc ? 0n : 1n)));
+    if (value) budget?.spend();
+    return value;
+  }
+
+  before(before: Temporal.Instant, inc: boolean, budget?: CandidateBudget): Temporal.ZonedDateTime | null {
+    const value = this.value(this.lastIndex(before.epochNanoseconds - (inc ? 0n : 1n)));
+    if (value) budget?.spend();
+    return value;
+  }
+
+  private range(first: bigint, last: bigint, budget: CandidateBudget): Temporal.ZonedDateTime[] {
+    if (last < first) return [];
+    budget.spend(Number(last - first + 1n));
     const out: Temporal.ZonedDateTime[] = [];
-    let value = this.after(after, inc);
-    while (value && (inc ? value.epochNanoseconds <= before.epochNanoseconds : value.epochNanoseconds < before.epochNanoseconds)) {
-      out.push(value);
-      value = this.after(value.toInstant(), false);
-    }
+    for (let index = first; index <= last; index++) out.push(this.value(index)!);
     return out;
   }
 
-  occursAt(instant: Temporal.Instant): boolean {
-    return this.after(instant, true)?.epochNanoseconds === instant.epochNanoseconds;
+  between(after: Temporal.Instant, before: Temporal.Instant, inc: boolean, budget = new CandidateBudget()): Temporal.ZonedDateTime[] {
+    return this.range(this.firstIndex(after.epochNanoseconds + (inc ? 0n : 1n)),
+      this.lastIndex(before.epochNanoseconds - (inc ? 0n : 1n)), budget);
   }
 
-  all(): Temporal.ZonedDateTime[] {
-    const out: Temporal.ZonedDateTime[] = [];
-    const limit = this.spec.count ?? (this.spec.until ? Infinity : 513);
-    for (let index = 0; index < limit; index++) {
-      const value = this.value(BigInt(index));
-      if (!value) break;
-      out.push(value);
+  *iterateWindow({ after, before, inc }: QueryWindow, budget = new CandidateBudget()): Generator<Temporal.ZonedDateTime> {
+    const last = this.lastIndex(before ? before.epochNanoseconds - (inc ? 0n : 1n) : MAX_INSTANT);
+    for (let index = this.firstIndex(after.epochNanoseconds + (inc ? 0n : 1n)); index <= last; index++) {
+      budget.spend();
+      yield this.value(index)!;
     }
-    return out;
   }
 
-  *iterate(): Generator<Temporal.ZonedDateTime> {
+  occursAt(instant: Temporal.Instant, budget?: CandidateBudget): boolean {
+    return this.after(instant, true, budget)?.epochNanoseconds === instant.epochNanoseconds;
+  }
+
+  all(budget = new CandidateBudget()): Temporal.ZonedDateTime[] {
+    let last = this.lastIndex(MAX_INSTANT);
+    if (this.spec.count === undefined && !this.spec.until && last > 512n) last = 512n;
+    return this.range(0n, last, budget);
+  }
+
+  *iterate(budget = new CandidateBudget()): Generator<Temporal.ZonedDateTime> {
     for (let index = 0n; ; index++) {
       const value = this.value(index);
       if (!value) return;
+      budget.spend();
       yield value;
     }
   }

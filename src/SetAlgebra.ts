@@ -3,8 +3,10 @@ import { Temporal } from 'temporal-polyfill';
 import { cloneDate, isValidDate } from './internal/dateutil.ts';
 import { DateSource } from './internal/DateSource.ts';
 import type { QueryMethods } from './internal/options.ts';
+import { CandidateBudget } from './internal/SearchLimitError.ts';
 import { SetEngine, type SetExpression } from './internal/SetEngine.ts';
-import type { SourceQuery } from './internal/spec.ts';
+import type { QueryWindow, SourceQuery } from './internal/spec.ts';
+import { iterateWindowWithQueries } from './internal/QueryWindow.ts';
 import { describeSetExpression, getToTextLocale, isSetExpressionFullyConvertible, type TextMergeDescriptor, type ToTextOptions } from './internal/text.ts';
 import { dateToZdt, toInstant, zdtToDate } from './internal/temporal.ts';
 
@@ -18,31 +20,48 @@ type TextQueryMethods = QueryMethods & {
  * interface used by the engine.
  */
 export class QueryMethodsSource implements SourceQuery {
-  constructor(private readonly query: QueryMethods) {}
+  constructor(private readonly query: QueryMethods, private readonly source?: SourceQuery) {}
 
-  all(): Temporal.ZonedDateTime[] {
-    return this.query.all().map((date) => dateToZdt(date, 'UTC'));
+  all(budget = new CandidateBudget()): Temporal.ZonedDateTime[] {
+    if (this.source) return this.source.all(budget);
+    const values = this.query.all();
+    budget.spend(values.length);
+    return values.map((date) => dateToZdt(date, 'UTC'));
   }
 
-  *iterate(): Generator<Temporal.ZonedDateTime> {
+  *iterate(budget = new CandidateBudget()): Generator<Temporal.ZonedDateTime> {
+    if (this.source) {
+      yield* this.source.iterate?.(budget) ?? this.source.all(budget);
+      return;
+    }
     for (const date of this.query.iterate?.() ?? this.query.all().slice().sort((a, b) => a.getTime() - b.getTime())) {
+      budget.spend();
       yield dateToZdt(date, 'UTC');
     }
   }
 
-  between(after: Temporal.Instant, before: Temporal.Instant, inc: boolean): Temporal.ZonedDateTime[] {
-    return this.query
-      .between(new Date(Number(after.epochMilliseconds)), new Date(Number(before.epochMilliseconds)), inc)
-      .map((date) => dateToZdt(date, 'UTC'));
+  between(after: Temporal.Instant, before: Temporal.Instant, inc: boolean, budget = new CandidateBudget()): Temporal.ZonedDateTime[] {
+    if (this.source) return this.source.between(after, before, inc, budget);
+    const values = this.query.between(new Date(after.epochMilliseconds), new Date(before.epochMilliseconds), inc);
+    budget.spend(values.length);
+    return values.map((date) => dateToZdt(date, 'UTC'));
   }
 
-  after(after: Temporal.Instant, inc: boolean): Temporal.ZonedDateTime | null {
+  iterateWindow(window: QueryWindow, budget = new CandidateBudget()): IterableIterator<Temporal.ZonedDateTime> {
+    return this.source?.iterateWindow?.(window, budget) ?? iterateWindowWithQueries(this, window, budget);
+  }
+
+  after(after: Temporal.Instant, inc: boolean, budget?: CandidateBudget): Temporal.ZonedDateTime | null {
+    if (this.source) return this.source.after(after, inc, budget);
     const value = this.query.after(new Date(Number(after.epochMilliseconds)), inc);
+    if (value) budget?.spend();
     return value ? dateToZdt(value, 'UTC') : null;
   }
 
-  before(before: Temporal.Instant, inc: boolean): Temporal.ZonedDateTime | null {
+  before(before: Temporal.Instant, inc: boolean, budget?: CandidateBudget): Temporal.ZonedDateTime | null {
+    if (this.source) return this.source.before(before, inc, budget);
     const value = this.query.before(new Date(Number(before.epochMilliseconds)), inc);
+    if (value) budget?.spend();
     return value ? dateToZdt(value, 'UTC') : null;
   }
 

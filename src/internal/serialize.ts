@@ -1,3 +1,4 @@
+import { Temporal } from 'temporal-polyfill';
 import { dateToZdt } from './temporal.ts';
 import { Frequency, type ByWeekday, type Options } from './options.ts';
 import { Weekday } from './weekday.ts';
@@ -52,6 +53,12 @@ function toCompactLocal(date: Date, tzid: string) {
   return dateToZdt(date, tzid).toString({ smallestUnit: 'second' }).replace(/[-:]/g, '').slice(0, 15);
 }
 
+/** Format an ISO calendar date as an iCalendar DATE value. */
+export function formatRfcDate(date: string): string {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new RangeError('Expected an ISO calendar date (YYYY-MM-DD)');
+  return Temporal.PlainDate.from(date).toString().replaceAll('-', '');
+}
+
 function formatDateWithZone(date: Date, tzid?: string | null) {
   if (date.getUTCMilliseconds()) throw new RangeError('RFC 5545 cannot preserve fractional seconds');
   if (tzid) {
@@ -66,7 +73,7 @@ function formatDateWithZone(date: Date, tzid?: string | null) {
   return `;TZID=${tzid}:${toCompactLocal(date, tzid)}`;
 }
 
-function formatUntil(date: Date, tzid?: string | null) {
+function formatUntil(date: Date) {
   if (date.getUTCMilliseconds()) throw new RangeError('RFC 5545 cannot preserve fractional seconds');
   return toCompactUtc(date);
 }
@@ -142,10 +149,12 @@ export function optionsToString(options: Partial<Options>): string {
           .join(',');
         break;
       case 'dtstart':
-        dtstart = `DTSTART${formatDateWithZone(value as Date, options.tzid)}`;
+        dtstart = options.dtstartDate
+          ? `DTSTART;VALUE=DATE:${formatRfcDate(options.dtstartDate)}`
+          : `DTSTART${formatDateWithZone(value as Date, options.tzid)}`;
         break;
       case 'until':
-        outValue = formatUntil(value as Date, options.tzid);
+        outValue = options.untilDate ? formatRfcDate(options.untilDate) : formatUntil(value as Date);
         break;
       default:
         outValue = Array.isArray(value) ? formatList(value) : String(value);

@@ -8,9 +8,9 @@
  */
 export { DateSource } from './internal/DateSource.ts';
 export { RuleSource } from './internal/RuleSource.ts';
-export { RecurrenceSearchLimitError } from './internal/SearchLimitError.ts';
+export { CandidateBudget, RecurrenceSearchLimitError } from './internal/SearchLimitError.ts';
 export { ElapsedSource } from './internal/ElapsedSource.ts';
 export type { ElapsedSpec } from './internal/ElapsedSource.ts';
 export { SetEngine } from './internal/SetEngine.ts';
 export type { SetExpression } from './internal/SetEngine.ts';
-export type { RuleSpec, SourceQuery } from './internal/spec.ts';
+export type { QueryWindow, RuleSpec, SourceQuery } from './internal/spec.ts';

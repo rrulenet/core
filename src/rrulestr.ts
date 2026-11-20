@@ -1,6 +1,6 @@
 import { Temporal } from 'temporal-polyfill';
 
-import { parseRuleString } from './internal/parse.ts';
+import { parseRuleString, plainDateFromCompact } from './internal/parse.ts';
 import type { Options } from './internal/options.ts';
 import { parseContentLine } from './internal/contentLine.ts';
 
@@ -37,11 +37,14 @@ export interface ParsedRRuleStringComponents {
   noCache: boolean;
   sawInlineDtstart: boolean;
   dtstart: Date | null;
+  dtstartDate?: string;
   tzid: string | null;
   rruleValues: Partial<Options>[];
   exruleValues: Partial<Options>[];
   rdateValues: Date[];
   exdateValues: Date[];
+  rdatePlainDates: (string | undefined)[];
+  exdatePlainDates: (string | undefined)[];
   rawOptions: RRuleStrOptions;
 }
 
@@ -65,46 +68,44 @@ function splitIntoLines(input: string, unfold = false): string[] {
     .filter(Boolean);
 }
 
-function parseDateList(line: string, defaultTzid: string): Date[] {
+function parseDateList(line: string, defaultTzid: string, dates: Date[], plainDates: (string | undefined)[]): void {
   const { parameters, value: body } = parseContentLine(line);
   const tzid = parameters.get('TZID') ?? defaultTzid;
 
-  return body
+  const values = body
     .split(',')
     .map((value) => value.trim())
-    .filter(Boolean)
-    .map((value) => {
-      if (/^\d{8}T\d{6}Z$/.test(value)) {
-        const normalized = value.replace(
-          /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/,
-          '$1-$2-$3T$4:$5:$6Z',
-        );
-        return new Date(normalized);
-      }
+    .filter(Boolean);
+  for (const value of values) {
+    const plainDate = plainDateFromCompact(value);
+    plainDates.push(plainDate);
+    if (/^\d{8}T\d{6}Z$/.test(value)) {
+      const normalized = value.replace(
+        /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/,
+        '$1-$2-$3T$4:$5:$6Z',
+      );
+      dates.push(new Date(normalized));
+      continue;
+    }
 
-      if (/^\d{8}T\d{6}$/.test(value)) {
-        const iso = value.replace(
-          /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})$/,
-          '$1-$2-$3T$4:$5:$6',
-        );
-        const instant = Temporal.PlainDateTime.from(iso).toZonedDateTime(tzid).toInstant();
-        return new Date(instant.epochMilliseconds);
-      }
+    if (/^\d{8}T\d{6}$/.test(value)) {
+      const iso = value.replace(
+        /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})$/,
+        '$1-$2-$3T$4:$5:$6',
+      );
+      const instant = Temporal.PlainDateTime.from(iso).toZonedDateTime(tzid).toInstant();
+      dates.push(new Date(instant.epochMilliseconds));
+      continue;
+    }
 
-      if (/^\d{8}$/.test(value)) {
-        const iso = value.replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3');
-        const instant = Temporal.PlainDate.from(iso).toZonedDateTime(tzid).toInstant();
-        return new Date(instant.epochMilliseconds);
-      }
+    if (plainDate) {
+      const instant = Temporal.PlainDate.from(plainDate).toZonedDateTime(tzid).toInstant();
+      dates.push(new Date(instant.epochMilliseconds));
+      continue;
+    }
 
-      return new Date(value);
-    });
-}
-
-function parseDtstartMeta(line: string): { tzid?: string; date?: Date } {
-  const tzid = extractLineTzid(line);
-  const options = parseRuleString(line);
-  return { tzid, date: options.dtstart ?? undefined };
+    dates.push(new Date(value));
+  }
 }
 
 function extractLineTzid(line: string): string | undefined {
@@ -147,6 +148,7 @@ export function groomRuleOptions(
   count?: number | null,
   until?: Date | null,
   reinterpretExternalDtstart = false,
+  dtstartDate?: string,
 ): Partial<Options> {
   const effectiveDtstart =
     parsed.dtstart ??
@@ -155,6 +157,7 @@ export function groomRuleOptions(
   return {
     ...parsed,
     dtstart: effectiveDtstart,
+    ...(!parsed.dtstart && dtstartDate ? { dtstartDate } : {}),
     count: parsed.count ?? count ?? undefined,
     until: parsed.until ?? until ?? undefined,
     tzid: parsed.tzid ?? tzid ?? undefined,
@@ -181,9 +184,12 @@ export function parseRRuleStringComponents(
   const exruleValues: Partial<Options>[] = [];
   const rdateValues: Date[] = [];
   const exdateValues: Date[] = [];
+  const rdatePlainDates: (string | undefined)[] = [];
+  const exdatePlainDates: (string | undefined)[] = [];
 
   let currentDtstartLine: string | undefined;
   let dtstart = options.dtstart;
+  let dtstartDate: string | undefined;
   let tzid = options.tzid;
   let sawInlineDtstart = false;
 
@@ -195,9 +201,11 @@ export function parseRRuleStringComponents(
     if (upperLine.startsWith('DTSTART')) {
       currentDtstartLine = normalizedLine;
       sawInlineDtstart = true;
-      const meta = parseDtstartMeta(normalizedLine);
-      if (meta.tzid) tzid = meta.tzid;
-      if (meta.date) dtstart = meta.date;
+      const meta = parseRuleString(normalizedLine, tzid ?? undefined);
+      const lineTzid = extractLineTzid(normalizedLine);
+      if (lineTzid || meta.dtstartDate) tzid = lineTzid ?? meta.tzid ?? tzid;
+      if (meta.dtstart) dtstart = meta.dtstart;
+      dtstartDate = meta.dtstartDate;
       continue;
     }
 
@@ -207,28 +215,28 @@ export function parseRRuleStringComponents(
         : upperLine.startsWith('RRULE:')
           ? normalizedLine
           : normalizedLine;
-      rruleValues.push(parseRuleString(source));
+      rruleValues.push(parseRuleString(source, tzid ?? undefined));
       continue;
     }
 
     if (upperLine.startsWith('EXRULE:')) {
       const rruleLine = normalizedLine.replace(/^EXRULE:/i, 'RRULE:');
       const source = currentDtstartLine ? `${currentDtstartLine}\n${rruleLine}` : rruleLine;
-      exruleValues.push(parseRuleString(source));
+      exruleValues.push(parseRuleString(source, tzid ?? undefined));
       continue;
     }
 
     if (upperLine.startsWith('RDATE')) {
       const lineTzid = extractLineTzid(normalizedLine);
       if (lineTzid && !tzid) tzid = lineTzid;
-      rdateValues.push(...parseDateList(normalizedLine, tzid ?? 'UTC'));
+      parseDateList(normalizedLine, tzid ?? 'UTC', rdateValues, rdatePlainDates);
       continue;
     }
 
     if (upperLine.startsWith('EXDATE')) {
       const lineTzid = extractLineTzid(normalizedLine);
       if (lineTzid && !tzid) tzid = lineTzid;
-      exdateValues.push(...parseDateList(normalizedLine, tzid ?? 'UTC'));
+      parseDateList(normalizedLine, tzid ?? 'UTC', exdateValues, exdatePlainDates);
       continue;
     }
 
@@ -239,11 +247,14 @@ export function parseRRuleStringComponents(
     noCache,
     sawInlineDtstart,
     dtstart,
+    dtstartDate,
     tzid,
     rruleValues,
     exruleValues,
     rdateValues,
     exdateValues,
+    rdatePlainDates,
+    exdatePlainDates,
     rawOptions: options,
   };
 }

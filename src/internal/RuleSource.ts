@@ -1,10 +1,11 @@
 import { Temporal } from 'temporal-polyfill';
 
-import type { ByMonthSpec, RuleSpec, SourceQuery } from './spec.ts';
+import type { ByMonthSpec, QueryWindow, RuleSpec, SourceQuery } from './spec.ts';
+import { isEmptyWindow, iterateWindowWithQueries } from './QueryWindow.ts';
 import { compareByInstant, dedupeByInstant, dedupeSortedByInstant } from './temporal.ts';
-import { RecurrenceSearchLimitError } from './SearchLimitError.ts';
+import { CandidateBudget, RecurrenceSearchLimitError } from './SearchLimitError.ts';
 import { ElapsedSource } from './ElapsedSource.ts';
-import { UtcWeekdayCountSource } from './UtcWeekdayCountSource.ts';
+import { UtcCalendarCountSource } from './UtcCalendarCountSource.ts';
 
 const monthWeekdayCache = new WeakMap<RuleSpec, Map<string, number[][]>>();
 const timePartsCache = new WeakMap<RuleSpec, { hours?: number[]; minutes?: number[]; seconds?: number[] }>();
@@ -235,11 +236,12 @@ function sortedTimeParts(spec: RuleSpec): { hours?: number[]; minutes?: number[]
   return cached;
 }
 
-function expandByTime(base: Temporal.ZonedDateTime, spec: RuleSpec): Temporal.ZonedDateTime[] {
+function expandByTime(base: Temporal.ZonedDateTime, spec: RuleSpec, budget?: CandidateBudget): Temporal.ZonedDateTime[] {
   const { hours: cachedHours, minutes: cachedMinutes, seconds: cachedSeconds } = sortedTimeParts(spec);
   const hours = cachedHours ?? [base.hour];
   const minutes = cachedMinutes ?? [base.minute];
   const seconds = cachedSeconds ?? [base.second];
+  budget?.spend(hours.length * minutes.length * seconds.length);
   const out: Temporal.ZonedDateTime[] = [];
   for (const hour of hours) {
     for (const minute of minutes) {
@@ -281,7 +283,7 @@ function matches(date: Temporal.ZonedDateTime, spec: RuleSpec): boolean {
   );
 }
 
-function emitForPeriod(periodBase: Temporal.ZonedDateTime, spec: RuleSpec): Temporal.ZonedDateTime[] {
+function emitForPeriod(periodBase: Temporal.ZonedDateTime, spec: RuleSpec, budget?: CandidateBudget): Temporal.ZonedDateTime[] {
   switch (spec.freq) {
     case 'WEEKLY': {
       const weekStart = periodBase.subtract({ days: (periodBase.dayOfWeek - (spec.wkst + 1) + 7) % 7 });
@@ -295,7 +297,7 @@ function emitForPeriod(periodBase: Temporal.ZonedDateTime, spec: RuleSpec): Temp
       ).sort((a, b) => ((a - spec.wkst + 7) % 7) - ((b - spec.wkst + 7) % 7));
       const candidates = weekdays.flatMap((weekday) => {
         const day = weekStart.add({ days: (weekday - spec.wkst + 7) % 7 });
-        return expandByTime(day, spec);
+        return expandByTime(day, spec, budget);
       });
       return applyBySetPos(candidates.filter((value) => matches(value, spec)), spec);
     }
@@ -332,7 +334,7 @@ function emitForPeriod(periodBase: Temporal.ZonedDateTime, spec: RuleSpec): Temp
           days.add(spec.dtstart.day);
         }
       }
-      const candidates = [...days].filter(day => day <= monthStart.daysInMonth).sort((a, b) => a - b).flatMap((day) => expandByTime(monthStart.with({ day }), spec));
+      const candidates = [...days].filter(day => day <= monthStart.daysInMonth).sort((a, b) => a - b).flatMap((day) => expandByTime(monthStart.with({ day }), spec, budget));
       return applyBySetPos(candidates.filter((value) => matches(value, spec)), spec);
     }
     case 'YEARLY': {
@@ -341,14 +343,16 @@ function emitForPeriod(periodBase: Temporal.ZonedDateTime, spec: RuleSpec): Temp
         const firstWeekStart = yearlyFirstWeekStart(periodBase.year, periodBase, spec.wkst);
         const weekdays = spec.byweekday?.length
           ? spec.byweekday.filter((w) => !w.ordinal).map((w) => w.weekday)
-          : [spec.dtstart.dayOfWeek - 1];
+          : spec.bymonthday?.length || spec.byyearday?.length
+            ? [0, 1, 2, 3, 4, 5, 6]
+            : [spec.dtstart.dayOfWeek - 1];
         const candidates = spec.byweekno.flatMap((weekNo) => {
           if ((weekNo > 0 && weekNo > lastWeek) || (weekNo < 0 && -weekNo > lastWeek)) return [];
           const weekIndex = weekNo > 0 ? weekNo - 1 : lastWeek + weekNo;
           const weekStart = firstWeekStart.add({ weeks: weekIndex });
           return weekdays.flatMap((weekday) => {
             const day = weekStart.add({ days: (weekday - spec.wkst + 7) % 7 });
-            return expandByTime(day, spec);
+            return expandByTime(day, spec, budget);
           });
         });
         return applyBySetPos(candidates.filter((value) => matches(value, spec)).sort(compareByInstant), spec);
@@ -357,7 +361,7 @@ function emitForPeriod(periodBase: Temporal.ZonedDateTime, spec: RuleSpec): Temp
       if (spec.byeaster !== undefined && !spec.byyearday?.length) {
         const easter = gregorianEaster(periodBase.year);
         const target = periodBase.with({ month: easter.month, day: easter.day }).add({ days: spec.byeaster });
-        const candidates = expandByTime(target, spec);
+        const candidates = expandByTime(target, spec, budget);
         return applyBySetPos(candidates.filter((value) => matches(value, spec)), spec);
       }
 
@@ -379,7 +383,7 @@ function emitForPeriod(periodBase: Temporal.ZonedDateTime, spec: RuleSpec): Temp
             cursor = cursor.add({ days: 1 });
           }
 
-          const candidates = days.flatMap((day) => expandByTime(day, spec));
+          const candidates = days.flatMap((day) => expandByTime(day, spec, budget));
           return applyBySetPos(dedupeByInstant(candidates), spec);
         }
 
@@ -389,7 +393,7 @@ function emitForPeriod(periodBase: Temporal.ZonedDateTime, spec: RuleSpec): Temp
         const candidates = months.flatMap((month) => {
           const sample = periodBase.with({ month, day: 1 });
           // Expand every selected month before applying the yearly positions.
-          return emitForPeriod(sample, { ...spec, freq: 'MONTHLY', bysetpos: undefined });
+          return emitForPeriod(sample, { ...spec, freq: 'MONTHLY', bysetpos: undefined }, budget);
         });
         return applyBySetPos(candidates.filter((value) => matches(value, spec)), spec);
       }
@@ -404,12 +408,12 @@ function emitForPeriod(periodBase: Temporal.ZonedDateTime, spec: RuleSpec): Temp
         cursor = cursor.add({ days: 1 });
       }
 
-      const candidates = days.flatMap((day) => expandByTime(day, spec));
+      const candidates = days.flatMap((day) => expandByTime(day, spec, budget));
       return applyBySetPos(candidates.filter((value) => matches(value, spec)).sort(compareByInstant), spec);
     }
     default:
       return applyBySetPos(
-        expandByTime(periodBase, spec).filter((value) => matches(value, spec)),
+        expandByTime(periodBase, spec, budget).filter((value) => matches(value, spec)),
         spec,
       );
   }
@@ -899,13 +903,13 @@ function periodLowerBound(cursor: Temporal.ZonedDateTime, spec: RuleSpec): Tempo
   }
 }
 
-function searchAfterByPeriod(spec: RuleSpec, after: Temporal.Instant, inc: boolean): Temporal.ZonedDateTime | null {
+function searchAfterByPeriod(spec: RuleSpec, after: Temporal.Instant, inc: boolean, budget: CandidateBudget): Temporal.ZonedDateTime | null {
   let cursor = periodLowerBound(spec.dtstart, spec);
   let safety = 0;
 
   while (safety < 10_000) {
     safety += 1;
-    const candidates = emitForPeriod(cursor, spec)
+    const candidates = emitForPeriod(cursor, spec, budget)
       .filter((date) => {
         const instant = date.toInstant();
         const lower = inc ? Temporal.Instant.compare(instant, after) >= 0 : Temporal.Instant.compare(instant, after) > 0;
@@ -982,7 +986,7 @@ function buildRscaleMonthDate(
   return null;
 }
 
-function allCalendarRscaleYearlySimple(spec: RuleSpec, calendarId: string): Temporal.ZonedDateTime[] {
+function allCalendarRscaleYearlySimple(spec: RuleSpec, calendarId: string, budget: CandidateBudget): Temporal.ZonedDateTime[] {
   const out: Temporal.ZonedDateTime[] = [];
   const seed = spec.dtstart.withCalendar(calendarId);
   const seedDate = seed.toPlainDate();
@@ -1008,6 +1012,7 @@ function allCalendarRscaleYearlySimple(spec: RuleSpec, calendarId: string): Temp
       if (spec.until && Temporal.ZonedDateTime.compare(candidate, spec.until) > 0) {
         return dedupeByInstant(out);
       }
+      budget.spend();
       out.push(candidate);
       emitted += 1;
       if (spec.count !== undefined && emitted >= spec.count) {
@@ -1023,7 +1028,7 @@ function allCalendarRscaleYearlySimple(spec: RuleSpec, calendarId: string): Temp
   return dedupeByInstant(out);
 }
 
-function allGregorianRscaleMonthlySimple(spec: RuleSpec): Temporal.ZonedDateTime[] {
+function allGregorianRscaleMonthlySimple(spec: RuleSpec, budget: CandidateBudget): Temporal.ZonedDateTime[] {
   const out: Temporal.ZonedDateTime[] = [];
   const start = spec.dtstart;
   const targetDom = start.day;
@@ -1054,6 +1059,7 @@ function allGregorianRscaleMonthlySimple(spec: RuleSpec): Temporal.ZonedDateTime
       occ = withPreservedTime(occ, start);
       if (Temporal.ZonedDateTime.compare(occ, start) >= 0) {
         if (spec.until && Temporal.ZonedDateTime.compare(occ, spec.until) > 0) break;
+        budget.spend();
         out.push(occ);
         emitted += 1;
         if (spec.count !== undefined && emitted >= spec.count) break;
@@ -1068,7 +1074,7 @@ function allGregorianRscaleMonthlySimple(spec: RuleSpec): Temporal.ZonedDateTime
   return dedupeByInstant(out);
 }
 
-function allGregorianRscaleYearlySimple(spec: RuleSpec): Temporal.ZonedDateTime[] {
+function allGregorianRscaleYearlySimple(spec: RuleSpec, budget: CandidateBudget): Temporal.ZonedDateTime[] {
   const out: Temporal.ZonedDateTime[] = [];
   const start = spec.dtstart;
   const targetMonth = spec.bymonth?.find((value): value is number => typeof value === 'number') ?? start.month;
@@ -1101,6 +1107,7 @@ function allGregorianRscaleYearlySimple(spec: RuleSpec): Temporal.ZonedDateTime[
       occ = withPreservedTime(occ, start);
       if (Temporal.ZonedDateTime.compare(occ, start) >= 0) {
         if (spec.until && Temporal.ZonedDateTime.compare(occ, spec.until) > 0) break;
+        budget.spend();
         out.push(occ);
         emitted += 1;
         if (spec.count !== undefined && emitted >= spec.count) break;
@@ -1115,11 +1122,11 @@ function allGregorianRscaleYearlySimple(spec: RuleSpec): Temporal.ZonedDateTime[
   return dedupeByInstant(out);
 }
 
-function allHebrewRscaleYearlySimple(spec: RuleSpec): Temporal.ZonedDateTime[] {
-  return allCalendarRscaleYearlySimple(spec, 'hebrew');
+function allHebrewRscaleYearlySimple(spec: RuleSpec, budget: CandidateBudget): Temporal.ZonedDateTime[] {
+  return allCalendarRscaleYearlySimple(spec, 'hebrew', budget);
 }
 
-function allHebrewRscaleYearlyByWeekNoAndWeekday(spec: RuleSpec): Temporal.ZonedDateTime[] {
+function allHebrewRscaleYearlyByWeekNoAndWeekday(spec: RuleSpec, budget: CandidateBudget): Temporal.ZonedDateTime[] {
   const out: Temporal.ZonedDateTime[] = [];
   let emitted = 0;
   let safety = 0;
@@ -1135,6 +1142,7 @@ function allHebrewRscaleYearlyByWeekNoAndWeekday(spec: RuleSpec): Temporal.Zoned
         if (spec.until && Temporal.ZonedDateTime.compare(candidate, spec.until) > 0) {
           return dedupeByInstant(out);
         }
+        budget.spend();
         out.push(candidate);
         emitted += 1;
         if (spec.count !== undefined && emitted >= spec.count) {
@@ -1152,7 +1160,7 @@ function allHebrewRscaleYearlyByWeekNoAndWeekday(spec: RuleSpec): Temporal.Zoned
   return dedupeByInstant(out);
 }
 
-function allHebrewRscaleMonthlySimple(spec: RuleSpec): Temporal.ZonedDateTime[] {
+function allHebrewRscaleMonthlySimple(spec: RuleSpec, budget: CandidateBudget): Temporal.ZonedDateTime[] {
   const out: Temporal.ZonedDateTime[] = [];
   let emitted = 0;
   let safety = 0;
@@ -1174,6 +1182,7 @@ function allHebrewRscaleMonthlySimple(spec: RuleSpec): Temporal.ZonedDateTime[] 
         if (spec.until && Temporal.ZonedDateTime.compare(candidate, spec.until) > 0) {
           return dedupeByInstant(out);
         }
+        budget.spend();
         out.push(candidate);
         emitted += 1;
         if (spec.count !== undefined && emitted >= spec.count) {
@@ -1208,7 +1217,7 @@ function matchesHebrewYearDay(date: Temporal.ZonedDateTime, spec: RuleSpec): boo
   });
 }
 
-function allHebrewRscaleDailyByMonthDay(spec: RuleSpec): Temporal.ZonedDateTime[] {
+function allHebrewRscaleDailyByMonthDay(spec: RuleSpec, budget: CandidateBudget): Temporal.ZonedDateTime[] {
   const out: Temporal.ZonedDateTime[] = [];
   let emitted = 0;
   let safety = 0;
@@ -1219,6 +1228,7 @@ function allHebrewRscaleDailyByMonthDay(spec: RuleSpec): Temporal.ZonedDateTime[
 
     if (!spec.until || Temporal.ZonedDateTime.compare(cursor, spec.until) <= 0) {
       if (Temporal.ZonedDateTime.compare(cursor, spec.dtstart) >= 0 && matchesHebrewMonthDay(cursor, spec)) {
+        budget.spend();
         out.push(cursor);
         emitted += 1;
         if (spec.count !== undefined && emitted >= spec.count) break;
@@ -1247,7 +1257,7 @@ function matchesCalendarYearDay(
   });
 }
 
-function allCalendarRscaleDailyByYearDay(spec: RuleSpec, calendarId: string): Temporal.ZonedDateTime[] {
+function allCalendarRscaleDailyByYearDay(spec: RuleSpec, calendarId: string, budget: CandidateBudget): Temporal.ZonedDateTime[] {
   const out: Temporal.ZonedDateTime[] = [];
   let emitted = 0;
   let safety = 0;
@@ -1258,6 +1268,7 @@ function allCalendarRscaleDailyByYearDay(spec: RuleSpec, calendarId: string): Te
 
     if (!spec.until || Temporal.ZonedDateTime.compare(cursor, spec.until) <= 0) {
       if (Temporal.ZonedDateTime.compare(cursor, spec.dtstart) >= 0 && matchesCalendarYearDay(cursor, spec, calendarId)) {
+        budget.spend();
         out.push(cursor);
         emitted += 1;
         if (spec.count !== undefined && emitted >= spec.count) break;
@@ -1273,7 +1284,7 @@ function allCalendarRscaleDailyByYearDay(spec: RuleSpec, calendarId: string): Te
   return dedupeByInstant(out);
 }
 
-function allHebrewRscaleMonthlyByWeekday(spec: RuleSpec): Temporal.ZonedDateTime[] {
+function allHebrewRscaleMonthlyByWeekday(spec: RuleSpec, budget: CandidateBudget): Temporal.ZonedDateTime[] {
   const out: Temporal.ZonedDateTime[] = [];
   let emitted = 0;
   let safety = 0;
@@ -1290,6 +1301,7 @@ function allHebrewRscaleMonthlyByWeekday(spec: RuleSpec): Temporal.ZonedDateTime
         return dedupeByInstant(out);
       }
       if (matchesByWeekday(candidate, spec)) {
+        budget.spend();
         out.push(candidate);
         emitted += 1;
         if (spec.count !== undefined && emitted >= spec.count) {
@@ -1319,7 +1331,7 @@ function addByFreq(date: Temporal.ZonedDateTime, spec: RuleSpec): Temporal.Zoned
   }
 }
 
-function allCalendarRscaleSubdailyByYearDay(spec: RuleSpec, calendarId: string): Temporal.ZonedDateTime[] {
+function allCalendarRscaleSubdailyByYearDay(spec: RuleSpec, calendarId: string, budget: CandidateBudget): Temporal.ZonedDateTime[] {
   const out: Temporal.ZonedDateTime[] = [];
   let emitted = 0;
   let safety = 0;
@@ -1330,6 +1342,7 @@ function allCalendarRscaleSubdailyByYearDay(spec: RuleSpec, calendarId: string):
 
     if (!spec.until || Temporal.ZonedDateTime.compare(cursor, spec.until) <= 0) {
       if (Temporal.ZonedDateTime.compare(cursor, spec.dtstart) >= 0 && matchesCalendarYearDay(cursor, spec, calendarId)) {
+        budget.spend();
         out.push(cursor);
         emitted += 1;
         if (spec.count !== undefined && emitted >= spec.count) break;
@@ -1371,7 +1384,7 @@ function matchesHebrewByWeekNoAndWeekday(date: Temporal.ZonedDateTime, spec: Rul
   return spec.byweekno.includes(info.week);
 }
 
-function allHebrewRscaleDailyLikeWeekNo(spec: RuleSpec): Temporal.ZonedDateTime[] {
+function allHebrewRscaleDailyLikeWeekNo(spec: RuleSpec, budget: CandidateBudget): Temporal.ZonedDateTime[] {
   const out: Temporal.ZonedDateTime[] = [];
   let emitted = 0;
   let safety = 0;
@@ -1382,6 +1395,7 @@ function allHebrewRscaleDailyLikeWeekNo(spec: RuleSpec): Temporal.ZonedDateTime[
 
     if (!spec.until || Temporal.ZonedDateTime.compare(cursor, spec.until) <= 0) {
       if (Temporal.ZonedDateTime.compare(cursor, spec.dtstart) >= 0 && matchesHebrewByWeekNoAndWeekday(cursor, spec)) {
+        budget.spend();
         out.push(cursor);
         emitted += 1;
         if (spec.count !== undefined && emitted >= spec.count) break;
@@ -1410,12 +1424,12 @@ export class RuleSource implements SourceQuery {
   }
 
   /** Stream calendar occurrences without applying all()'s finite preview cap. */
-  *iterate(): Generator<Temporal.ZonedDateTime> {
-    if (this.calendar) yield* this.calendar.iterate();
-    else yield* this.all();
+  *iterate(budget = new CandidateBudget()): Generator<Temporal.ZonedDateTime> {
+    if (this.calendar) yield* this.calendar.iterate(budget);
+    else yield* this.all(budget);
   }
 
-  private allSparseSubdaily(): Temporal.ZonedDateTime[] {
+  private allSparseSubdaily(budget: CandidateBudget): Temporal.ZonedDateTime[] {
     const out: Temporal.ZonedDateTime[] = [];
     let dayCursor = this.spec.dtstart.with({ hour: 0, minute: 0, second: 0 });
     let emitted = 0;
@@ -1437,6 +1451,7 @@ export class RuleSource implements SourceQuery {
             if (this.spec.until && Temporal.ZonedDateTime.compare(cursor, this.spec.until) > 0) {
               return dedupeSortedByInstant(out);
             }
+            budget.spend();
             out.push(cursor);
             emitted += 1;
             if (this.spec.count !== undefined && emitted >= this.spec.count) {
@@ -1454,9 +1469,12 @@ export class RuleSource implements SourceQuery {
     return dedupeSortedByInstant(out);
   }
 
-  all(): Temporal.ZonedDateTime[] {
-    if (this.calendar) return this.calendar.all();
-    if (this.allCache) return this.allCache;
+  all(budget = new CandidateBudget()): Temporal.ZonedDateTime[] {
+    if (this.calendar) return this.calendar.all(budget);
+    if (this.allCache) {
+      budget.spend(this.allCache.length);
+      return this.allCache;
+    }
     if (this.spec.count === 0) {
       this.allCache = [];
       return this.allCache;
@@ -1465,12 +1483,12 @@ export class RuleSource implements SourceQuery {
     let result: Temporal.ZonedDateTime[];
     if (this.spec.rscale === 'GREGORIAN') {
       if (this.spec.freq === 'MONTHLY' && !this.spec.bymonthday?.length && !this.spec.byweekday?.length) {
-        result = allGregorianRscaleMonthlySimple(this.spec);
+        result = allGregorianRscaleMonthlySimple(this.spec, budget);
         this.allCache = result;
         return result;
       }
       if (this.spec.freq === 'YEARLY') {
-        result = allGregorianRscaleYearlySimple(this.spec);
+        result = allGregorianRscaleYearlySimple(this.spec, budget);
         this.allCache = result;
         return result;
       }
@@ -1482,26 +1500,26 @@ export class RuleSource implements SourceQuery {
         this.spec.byweekday?.length &&
         this.spec.byweekday.every((entry) => entry.ordinal === undefined)
       ) {
-        result = allHebrewRscaleYearlyByWeekNoAndWeekday(this.spec);
+        result = allHebrewRscaleYearlyByWeekNoAndWeekday(this.spec, budget);
         this.allCache = result;
         return result;
       }
-      result = allHebrewRscaleYearlySimple(this.spec);
+      result = allHebrewRscaleYearlySimple(this.spec, budget);
       this.allCache = result;
       return result;
     }
     if (this.spec.rscale === 'CHINESE' && this.spec.freq === 'YEARLY') {
-      result = allCalendarRscaleYearlySimple(this.spec, 'chinese');
+      result = allCalendarRscaleYearlySimple(this.spec, 'chinese', budget);
       this.allCache = result;
       return result;
     }
     if (this.spec.rscale === 'INDIAN' && this.spec.freq === 'YEARLY') {
-      result = allCalendarRscaleYearlySimple(this.spec, 'indian');
+      result = allCalendarRscaleYearlySimple(this.spec, 'indian', budget);
       this.allCache = result;
       return result;
     }
     if (this.spec.rscale === 'HEBREW' && this.spec.freq === 'DAILY' && this.spec.bymonthday?.length) {
-      result = allHebrewRscaleDailyByMonthDay(this.spec);
+      result = allHebrewRscaleDailyByMonthDay(this.spec, budget);
       this.allCache = result;
       return result;
     }
@@ -1515,7 +1533,7 @@ export class RuleSource implements SourceQuery {
       !this.spec.byweekday?.length &&
       !this.spec.bysetpos?.length
     ) {
-      result = allCalendarRscaleDailyByYearDay(this.spec, 'indian');
+      result = allCalendarRscaleDailyByYearDay(this.spec, 'indian', budget);
       this.allCache = result;
       return result;
     }
@@ -1526,11 +1544,11 @@ export class RuleSource implements SourceQuery {
         !this.spec.bymonthday?.length &&
         !this.spec.bysetpos?.length
       ) {
-        result = allHebrewRscaleMonthlyByWeekday(this.spec);
+        result = allHebrewRscaleMonthlyByWeekday(this.spec, budget);
         this.allCache = result;
         return result;
       }
-      result = allHebrewRscaleMonthlySimple(this.spec);
+      result = allHebrewRscaleMonthlySimple(this.spec, budget);
       this.allCache = result;
       return result;
     }
@@ -1544,7 +1562,7 @@ export class RuleSource implements SourceQuery {
       !this.spec.byweekday?.length &&
       !this.spec.bysetpos?.length
     ) {
-      result = allCalendarRscaleSubdailyByYearDay(this.spec, rscaleCalendarId(this.spec)!);
+      result = allCalendarRscaleSubdailyByYearDay(this.spec, rscaleCalendarId(this.spec)!, budget);
       this.allCache = result;
       return result;
     }
@@ -1555,13 +1573,13 @@ export class RuleSource implements SourceQuery {
       this.spec.byweekno?.length &&
       this.spec.byweekday?.length
     ) {
-      result = allHebrewRscaleDailyLikeWeekNo(this.spec);
+      result = allHebrewRscaleDailyLikeWeekNo(this.spec, budget);
       this.allCache = result;
       return result;
     }
 
     if (hasSparseSubdailyCalendarFilters(this.spec)) {
-      result = this.allSparseSubdaily();
+      result = this.allSparseSubdaily(budget);
       this.allCache = result;
       return result;
     }
@@ -1599,7 +1617,7 @@ export class RuleSource implements SourceQuery {
 
     while (safety < maxIterations) {
       safety += 1;
-      for (const candidate of emitForPeriod(cursor, this.spec)) {
+      for (const candidate of emitForPeriod(cursor, this.spec, budget)) {
         if (Temporal.ZonedDateTime.compare(candidate, this.spec.dtstart) < 0) continue;
         if (this.spec.until && Temporal.ZonedDateTime.compare(candidate, this.spec.until) > 0) {
           result = dedupeByInstant(out);
@@ -1624,15 +1642,15 @@ export class RuleSource implements SourceQuery {
     return result;
   }
 
-  between(after: Temporal.Instant, before: Temporal.Instant, inc: boolean): Temporal.ZonedDateTime[] {
-    if (this.calendar) return this.calendar.between(after, before, inc);
+  between(after: Temporal.Instant, before: Temporal.Instant, inc: boolean, budget = new CandidateBudget()): Temporal.ZonedDateTime[] {
+    if (this.calendar) return this.calendar.between(after, before, inc, budget);
     if (hasSimpleOpenEndedCadence(this.spec)) {
       return simpleCadenceBetween(this.spec, after, before, inc);
     }
     if (hasBoundedSubdailySearchCandidate(this.spec)) {
       return boundedSubdailyBetween(this.spec, after, before, inc);
     }
-    return this.all().filter((date) => {
+    return this.all(budget).filter((date) => {
       const instant = date.toInstant();
       const lower = inc ? Temporal.Instant.compare(instant, after) >= 0 : Temporal.Instant.compare(instant, after) > 0;
       const upper = inc ? Temporal.Instant.compare(instant, before) <= 0 : Temporal.Instant.compare(instant, before) < 0;
@@ -1640,8 +1658,12 @@ export class RuleSource implements SourceQuery {
     });
   }
 
-  after(after: Temporal.Instant, inc: boolean): Temporal.ZonedDateTime | null {
-    if (this.calendar) return this.calendar.after(after, inc);
+  iterateWindow(window: QueryWindow, budget = new CandidateBudget()): Generator<Temporal.ZonedDateTime> {
+    return this.calendar?.iterateWindow(window, budget) ?? iterateWindowWithQueries(this, window, budget);
+  }
+
+  after(after: Temporal.Instant, inc: boolean, budget = new CandidateBudget()): Temporal.ZonedDateTime | null {
+    if (this.calendar) return this.calendar.after(after, inc, budget);
     if (hasSimpleOpenEndedCadence(this.spec)) {
       return simpleCadenceAfter(this.spec, after, inc);
     }
@@ -1649,30 +1671,30 @@ export class RuleSource implements SourceQuery {
       return boundedSubdailyAfter(this.spec, after, inc);
     }
     if (this.spec.count === undefined) {
-      return searchAfterByPeriod(this.spec, after, inc);
+      return searchAfterByPeriod(this.spec, after, inc, budget);
     }
-    return this.all().find((date) => {
+    return this.all(budget).find((date) => {
       const cmp = Temporal.Instant.compare(date.toInstant(), after);
       return inc ? cmp >= 0 : cmp > 0;
     }) ?? null;
   }
 
-  before(before: Temporal.Instant, inc: boolean): Temporal.ZonedDateTime | null {
-    if (this.calendar) return this.calendar.before(before, inc);
+  before(before: Temporal.Instant, inc: boolean, budget = new CandidateBudget()): Temporal.ZonedDateTime | null {
+    if (this.calendar) return this.calendar.before(before, inc, budget);
     if (hasSimpleOpenEndedCadence(this.spec)) {
       return simpleCadenceBefore(this.spec, before, inc);
     }
-    const values = this.all().filter((date) => {
+    const values = this.all(budget).filter((date) => {
       const cmp = Temporal.Instant.compare(date.toInstant(), before);
       return inc ? cmp <= 0 : cmp < 0;
     });
     return values.length ? values[values.length - 1]! : null;
   }
 
-  occursAt(instant: Temporal.Instant): boolean {
-    if (this.calendar) return this.calendar.occursAt(instant);
+  occursAt(instant: Temporal.Instant, budget = new CandidateBudget()): boolean {
+    if (this.calendar) return this.calendar.occursAt(instant, budget);
     if (this.spec.count !== undefined) {
-      return this.all().some((date) => Temporal.Instant.compare(date.toInstant(), instant) === 0);
+      return this.all(budget).some((date) => Temporal.Instant.compare(date.toInstant(), instant) === 0);
     }
 
     const date = instant.toZonedDateTimeISO(this.spec.dtstart.timeZoneId);
@@ -1680,7 +1702,7 @@ export class RuleSource implements SourceQuery {
     if (this.spec.until && Temporal.ZonedDateTime.compare(date, this.spec.until) > 0) return false;
     if (!isOnInterval(date, this.spec)) return false;
 
-    return emitForPeriod(periodLowerBound(date, this.spec), this.spec)
+    return emitForPeriod(periodLowerBound(date, this.spec), this.spec, budget)
       .some((candidate) => Temporal.Instant.compare(candidate.toInstant(), instant) === 0);
   }
 }
@@ -1720,6 +1742,10 @@ function hasReachableClock(spec: RuleSpec): boolean {
 // Calendar dates and clock slots form a sorted Cartesian product. Keep the
 // date set small, but materialize only the selected slots, even for a dense
 // yearly rule. Positional ranks belong to the full period, before clipping.
+function calendarPeriodDates(cursor: Temporal.ZonedDateTime, spec: RuleSpec): Temporal.ZonedDateTime[] {
+  return emitForPeriod(cursor, { ...spec, byhour: [0], byminute: [0], bysecond: [0], bysetpos: undefined });
+}
+
 function *calendarPeriodCandidates(
   cursor: Temporal.ZonedDateTime,
   spec: RuleSpec,
@@ -1727,7 +1753,7 @@ function *calendarPeriodCandidates(
   upper?: Temporal.ZonedDateTime,
   reverse = false,
 ): Generator<Temporal.ZonedDateTime> {
-  const dates = emitForPeriod(cursor, { ...spec, byhour: [0], byminute: [0], bysecond: [0], bysetpos: undefined });
+  const dates = calendarPeriodDates(cursor, spec);
   const parts = sortedTimeParts(spec);
   const hours = [...new Set(parts.hours ?? [spec.dtstart.hour])];
   const minutes = [...new Set(parts.minutes ?? [spec.dtstart.minute])];
@@ -1745,10 +1771,12 @@ function *calendarPeriodCandidates(
     let lo = 0, hi = size;
     const day = value.toPlainDate();
     const time = value.hour * 3600 + value.minute * 60 + value.second;
+    const fractionalOrder = spec.dtstart.millisecond - value.millisecond ||
+      spec.dtstart.microsecond - value.microsecond || spec.dtstart.nanosecond - value.nanosecond;
     while (lo < hi) {
       const mid = Math.floor((lo + hi) / 2);
       const cmp = Temporal.PlainDate.compare(dates[Math.floor(mid / slots)]!.toPlainDate(), day);
-      const delta = cmp || clockAt(mid % slots) - time;
+      const delta = cmp || clockAt(mid % slots) - time || fractionalOrder;
       if (delta < 0 || (after && delta === 0)) lo = mid + 1;
       else hi = mid;
     }
@@ -1778,7 +1806,8 @@ class CalendarRuleSource implements SourceQuery {
   private readonly unit: 'years' | 'months' | 'weeks' | 'days' | 'hours' | 'minutes' | 'seconds';
   private readonly subdaily: boolean;
   private readonly reachableClock: boolean;
-  private readonly rankedCount: Pick<SourceQuery, 'after' | 'before' | 'between'> | null;
+  private readonly rankedCount: ElapsedSource | UtcCalendarCountSource | null;
+  private yearlyEmpty: boolean | undefined;
   private startLower: Temporal.ZonedDateTime | null = null;
   private cache: Temporal.ZonedDateTime[] | null = null;
 
@@ -1796,11 +1825,34 @@ class CalendarRuleSource implements SourceQuery {
       ![spec.byhour, spec.byminute, spec.bysecond, spec.bymonth, spec.bymonthday, spec.byyearday,
         spec.byweekno, spec.byweekday, spec.bysetpos].some(values => values?.length)
       ? new ElapsedSource({ start: spec.dtstart.toInstant(), every: `PT${seconds * spec.interval}S`, count: spec.count, tzid: spec.tzid })
-      : UtcWeekdayCountSource.from(spec);
+      : UtcCalendarCountSource.from(spec);
   }
 
   private at(index: number): Temporal.ZonedDateTime {
     return this.origin.add({ [this.unit]: index * this.spec.interval });
+  }
+
+  private hasPossibleYearlyPeriod(): boolean {
+    const { freq, rscale, byeaster, interval, dtstart, bysetpos } = this.spec;
+    if (freq !== 'YEARLY' || rscale || byeaster !== undefined ||
+        !['iso8601', 'gregory'].includes(dtstart.calendarId) || !Number.isSafeInteger(interval) || interval < 1) return true;
+    if (this.yearlyEmpty !== undefined) return !this.yearlyEmpty;
+
+    const { hours, minutes, seconds } = sortedTimeParts(this.spec);
+    const slots = (hours?.length ?? 1) * (minutes?.length ?? 1) * (seconds?.length ?? 1);
+    const required = bysetpos?.length ? bysetpos.reduce((min, pos) => Math.min(min, Math.abs(pos)), Infinity) : 1;
+    const cycleStart = this.origin.with({ year: 2000 + ((this.origin.year % 400 + 400) % 400) });
+    let offset = 0;
+    do {
+      // The date/slot count is an upper bound before resolving timezone gaps or collisions.
+      if (calendarPeriodDates(cycleStart.add({ years: offset }), this.spec).length * slots >= required) {
+        this.yearlyEmpty = false;
+        return true;
+      }
+      offset = (offset + interval % 400) % 400;
+    } while (offset !== 0);
+    this.yearlyEmpty = true;
+    return false;
   }
 
   private index(value: Temporal.ZonedDateTime): number {
@@ -1841,8 +1893,8 @@ class CalendarRuleSource implements SourceQuery {
     return result;
   }
 
-  private *values(from = 0, upper?: Temporal.Instant, lower?: Temporal.ZonedDateTime): Generator<Temporal.ZonedDateTime> {
-    if (this.spec.count === 0 || !this.reachableClock) return;
+  private *values(budget: CandidateBudget, from = 0, upper?: Temporal.Instant, lower?: Temporal.ZonedDateTime): Generator<Temporal.ZonedDateTime> {
+    if (this.spec.count === 0 || !this.reachableClock || !this.hasPossibleYearlyPeriod()) return;
     if (!this.subdaily && from === 0) {
       // DTSTART bounds resolved instants, not nominal wall times. During a
       // spring gap, earlier nominal slots can resolve at or after DTSTART.
@@ -1904,11 +1956,14 @@ class CalendarRuleSource implements SourceQuery {
           continue;
         }
       }
-      const candidates = this.subdaily
-        ? applyBySetPos(subdailyCandidatesForPeriod(cursor, this.spec).filter(value => matches(value, this.spec) && matchesTimeSelectors(value, this.spec)).sort(compareByInstant), this.spec)
+      const subdailySlots = this.subdaily ? subdailyCandidatesForPeriod(cursor, this.spec) : null;
+      const candidates = subdailySlots
+        ? applyBySetPos(subdailySlots.filter(value => matchesTimeSelectors(value, this.spec)), this.spec)
         : calendarPeriodCandidates(cursor, this.spec, lower, nominalEnd);
+      if (subdailySlots) budget.spend(subdailySlots.length);
       for (const candidate of candidates) {
         if (pending.length && (!bufferUntil || Temporal.ZonedDateTime.compare(candidate, bufferUntil) > 0)) yield* drain();
+        if (!subdailySlots) budget.spend();
         const resolved = this.spec.tzid === 'UTC' ? candidate
           : candidate.toPlainDateTime().toZonedDateTime(this.spec.tzid, { disambiguation: 'compatible' });
         // Local wall time is the resolved instant plus its offset. Construct a
@@ -1925,22 +1980,30 @@ class CalendarRuleSource implements SourceQuery {
     throw new RecurrenceSearchLimitError();
   }
 
-  all(): Temporal.ZonedDateTime[] {
-    if (this.cache) return this.cache;
+  all(budget: CandidateBudget): Temporal.ZonedDateTime[] {
+    if (this.cache) {
+      budget.spend(this.cache.length);
+      return this.cache;
+    }
+    if (this.rankedCount) return this.cache = this.rankedCount.all(budget);
     const out: Temporal.ZonedDateTime[] = [];
     const limit = this.spec.count ?? (this.spec.until ? Infinity : 513);
     if (limit === 0) return this.cache = out;
-    for (const value of this.values()) {
+    for (const value of this.values(budget)) {
       out.push(value);
       if (out.length >= limit) break;
     }
     return this.cache = out;
   }
 
-  *iterate(): Generator<Temporal.ZonedDateTime> {
+  *iterate(budget: CandidateBudget, upper?: Temporal.Instant): Generator<Temporal.ZonedDateTime> {
+    if (this.rankedCount && !upper) {
+      yield* this.rankedCount.iterate(budget);
+      return;
+    }
     let count = 0;
     if (this.spec.count === 0) return;
-    for (const value of this.values()) {
+    for (const value of this.values(budget, 0, upper)) {
       yield value;
       if (++count >= (this.spec.count ?? Infinity)) return;
     }
@@ -1961,41 +2024,66 @@ class CalendarRuleSource implements SourceQuery {
     return lo;
   }
 
-  between(after: Temporal.Instant, before: Temporal.Instant, inc: boolean): Temporal.ZonedDateTime[] {
-    if (this.rankedCount) return this.rankedCount.between(after, before, inc);
-    if (Temporal.Instant.compare(after, before) > 0) return [];
+  between(after: Temporal.Instant, before: Temporal.Instant, inc: boolean, budget: CandidateBudget): Temporal.ZonedDateTime[] {
+    const window = { after, before, inc };
+    if (isEmptyWindow(window)) return [];
+    if (this.rankedCount) return this.rankedCount.between(after, before, inc, budget);
     if (this.spec.count !== undefined && this.cache) {
-      return this.cache.slice(this.cacheIndex(after, !inc), this.cacheIndex(before, inc));
+      const start = this.cacheIndex(after, !inc);
+      const end = this.cacheIndex(before, inc);
+      budget.spend(end - start);
+      return this.cache.slice(start, end);
     }
-    const lower = this.queryNominal(after, false);
-    const values = this.spec.count !== undefined ? this.cache ?? this.iterate() : this.values(this.index(lower), before, lower);
-    const out: Temporal.ZonedDateTime[] = [];
-    for (const value of values) {
-      const stamp = value.epochNanoseconds;
-      if (inc ? stamp > before.epochNanoseconds : stamp >= before.epochNanoseconds) break;
-      if (inc ? stamp >= after.epochNanoseconds : stamp > after.epochNanoseconds) out.push(value);
-    }
-    return out;
+    return [...this.iterateWindow(window, budget)];
   }
 
-  after(after: Temporal.Instant, inc: boolean): Temporal.ZonedDateTime | null {
-    if (this.rankedCount) return this.rankedCount.after(after, inc);
-    if (this.spec.count !== undefined && this.cache) return this.cache[this.cacheIndex(after, !inc)] ?? null;
+  *iterateWindow({ after, before, inc }: QueryWindow, budget: CandidateBudget): Generator<Temporal.ZonedDateTime> {
+    if (isEmptyWindow({ after, before, inc })) return;
+    if (this.rankedCount) {
+      yield* this.rankedCount.iterateWindow({ after, before, inc }, budget);
+      return;
+    }
+    if (this.spec.count !== undefined && this.cache) {
+      const end = before ? this.cacheIndex(before, inc) : this.cache.length;
+      for (let index = this.cacheIndex(after, !inc); index < end; index++) {
+        budget.spend();
+        yield this.cache[index]!;
+      }
+      return;
+    }
+    const lower = this.queryNominal(inc || !before ? after : after.add({ nanoseconds: 1 }), false);
+    const upper = before && (inc ? before : before.subtract({ nanoseconds: 1 }));
+    const values = this.spec.count !== undefined ? this.iterate(budget, upper) : this.values(budget, this.index(lower), upper, lower);
+    const lowerStamp = after.epochNanoseconds + (inc ? 0n : 1n);
+    for (const value of values) {
+      if (value.epochNanoseconds >= lowerStamp) yield value;
+    }
+  }
+
+  after(after: Temporal.Instant, inc: boolean, budget: CandidateBudget): Temporal.ZonedDateTime | null {
+    if (this.rankedCount) return this.rankedCount.after(after, inc, budget);
+    if (this.spec.count !== undefined && this.cache) {
+      budget.spend();
+      return this.cache[this.cacheIndex(after, !inc)] ?? null;
+    }
     const lower = this.queryNominal(after, false);
-    const values = this.spec.count !== undefined ? this.cache ?? this.iterate() : this.values(this.index(lower), undefined, lower);
+    const values = this.spec.count !== undefined ? this.iterate(budget) : this.values(budget, this.index(lower), undefined, lower);
     for (const value of values) {
       if (inc ? value.epochNanoseconds >= after.epochNanoseconds : value.epochNanoseconds > after.epochNanoseconds) return value;
     }
     return null;
   }
 
-  before(before: Temporal.Instant, inc: boolean): Temporal.ZonedDateTime | null {
-    if (this.rankedCount) return this.rankedCount.before(before, inc);
-    if (!this.reachableClock) return null;
-    if (this.spec.count !== undefined && this.cache) return this.cache[this.cacheIndex(before, inc) - 1] ?? null;
+  before(before: Temporal.Instant, inc: boolean, budget: CandidateBudget): Temporal.ZonedDateTime | null {
+    if (this.rankedCount) return this.rankedCount.before(before, inc, budget);
+    if (!this.reachableClock || !this.hasPossibleYearlyPeriod()) return null;
+    if (this.spec.count !== undefined && this.cache) {
+      budget.spend();
+      return this.cache[this.cacheIndex(before, inc) - 1] ?? null;
+    }
     if (this.spec.count !== undefined) {
       let result: Temporal.ZonedDateTime | null = null;
-      for (const value of this.cache ?? this.iterate()) {
+      for (const value of this.iterate(budget, before)) {
         if (inc ? value.epochNanoseconds > before.epochNanoseconds : value.epochNanoseconds >= before.epochNanoseconds) break;
         result = value;
       }
@@ -2012,6 +2100,7 @@ class CalendarRuleSource implements SourceQuery {
       for (let index = this.index(upper), attempts = 0; index >= 0; index--, attempts++) {
         if (attempts >= 10_000) throw new RecurrenceSearchLimitError();
         for (const value of calendarPeriodCandidates(this.at(index), this.spec, undefined, upper, true)) {
+          budget.spend();
           if (value.epochNanoseconds < this.spec.dtstart.epochNanoseconds) return null;
           if (inc ? value.epochNanoseconds <= before.epochNanoseconds : value.epochNanoseconds < before.epochNanoseconds) return value;
         }
@@ -2023,7 +2112,7 @@ class CalendarRuleSource implements SourceQuery {
     while (true) {
       const begin = Math.max(0, end - width);
       let result: Temporal.ZonedDateTime | null = null;
-      for (const value of this.values(begin, before)) {
+      for (const value of this.values(budget, begin, before)) {
         if (inc ? value.epochNanoseconds <= before.epochNanoseconds : value.epochNanoseconds < before.epochNanoseconds) result = value;
       }
       if (result || begin === 0) {
@@ -2038,7 +2127,7 @@ class CalendarRuleSource implements SourceQuery {
             const start = nominal(transition).subtract({ nanoseconds: shift });
             const stop = Temporal.Instant.fromEpochNanoseconds(transition.epochNanoseconds + BigInt(shift));
             const ceiling = before.epochNanoseconds < stop.epochNanoseconds ? before : stop;
-            for (const value of this.values(this.index(start), ceiling)) {
+            for (const value of this.values(budget, this.index(start), ceiling)) {
               if ((inc ? value.epochNanoseconds <= before.epochNanoseconds : value.epochNanoseconds < before.epochNanoseconds) &&
                   (!result || value.epochNanoseconds > result.epochNanoseconds)) result = value;
             }
@@ -2050,7 +2139,8 @@ class CalendarRuleSource implements SourceQuery {
     }
   }
 
-  occursAt(instant: Temporal.Instant): boolean {
-    return this.after(instant, true)?.epochNanoseconds === instant.epochNanoseconds;
+  occursAt(instant: Temporal.Instant, budget: CandidateBudget): boolean {
+    if (this.rankedCount) return this.rankedCount.after(instant, true, budget)?.epochNanoseconds === instant.epochNanoseconds;
+    return this.between(instant, instant, true, budget).length !== 0;
   }
 }

@@ -130,10 +130,12 @@ export function normalizeOptions(input: Partial<Options>): Options {
   return {
     freq: input.freq ?? Frequency.YEARLY,
     dtstart: input.dtstart ?? null,
+    ...(input.dtstartDate === undefined ? {} : { dtstartDate: input.dtstartDate }),
     interval: input.interval ?? 1,
     wkst: input.wkst ?? null,
     count: input.count ?? null,
     until: input.until ?? null,
+    ...(input.untilDate === undefined ? {} : { untilDate: input.untilDate }),
     tzid: input.tzid ?? null,
     bysetpos: input.bysetpos ?? null,
     bymonth: input.bymonth ?? null,

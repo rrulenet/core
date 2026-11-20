@@ -69,9 +69,11 @@ Calendar overlaps select the first passage, while spring gaps use the
 pre-transition offset. COUNT applies before explicit dates and exclusions.
 
 Unbounded `all()` returns a finite preview. Use bounded queries, directional
-queries, or ordered iteration when you need more of the series. An error with
-code `RECURRENCE_SEARCH_LIMIT` means the query could not establish completeness;
-it does not prove that the schedule is empty.
+queries, or ordered iteration when you need more of the series. A built-in query
+has a default budget of 1,000,000 candidate evaluations, shared across sources
+in a set expression. Use a second argument to `new SetEngine(expression, limit)`
+to set a different budget. A `RECURRENCE_SEARCH_LIMIT` error signals an
+incomplete query.
 
 See the [engine reference](https://github.com/rrulenet/core/blob/main/docs/API.md)
 for source contracts, selector validation and search behavior.

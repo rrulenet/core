@@ -100,7 +100,11 @@ function parseIntegerList(value: string, field: string): number[] {
   return value.split(',').map(token => parseInteger(token, field));
 }
 
-function parseDtstartToken(token: string, result: Partial<Options>) {
+export function plainDateFromCompact(value: string): string | undefined {
+  return /^(\d{4})(\d{2})(\d{2})$/.test(value) ? value.replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3') : undefined;
+}
+
+function parseDtstartToken(token: string, result: Partial<Options>, dateTzid?: string) {
   // Retain the historical DTSTART= form used inside a classic rule string.
   token = token.replace(/^DTSTART=/i, 'DTSTART:');
   if (!token.includes(':')) token = token.replace(/=([^;=]+)$/, ':$1');
@@ -110,20 +114,23 @@ function parseDtstartToken(token: string, result: Partial<Options>) {
     if (key !== 'TZID' && (key !== 'VALUE' || !['DATE', 'DATE-TIME'].includes(value.toUpperCase()))) return false;
   }
   const tzid = parameters.get('TZID');
-  result.tzid = tzid ?? 'UTC';
+  const plainDate = plainDateFromCompact(value);
+  result.tzid = tzid ?? (plainDate ? dateTzid : undefined) ?? 'UTC';
   result.dtstart = parseCompactDateTime(value, result.tzid);
+  if (plainDate) result.dtstartDate = plainDate;
+  else delete result.dtstartDate;
   return true;
 }
 
 /**
  * Parse a single RFC-style rule string into compat-style options.
  */
-export function parseRuleString(input: string): Partial<Options> {
+export function parseRuleString(input: string, dateTzid?: string): Partial<Options> {
   const result: Partial<Options> = {};
   for (const line of unfoldLines(input)) {
     const upperLine = line.toUpperCase();
     if (upperLine.startsWith('DTSTART')) {
-      if (!parseDtstartToken(line, result)) {
+      if (!parseDtstartToken(line, result, dateTzid)) {
         throw new Error(`Invalid DTSTART line: ${line}`);
       }
       continue;
@@ -137,7 +144,7 @@ export function parseRuleString(input: string): Partial<Options> {
 
     const embeddedDtstart = /(?:^|;)DTSTART(?:;TZID=([^:=;]+))?(?::|=)([^;]+)/i.exec(rule);
     if (embeddedDtstart) {
-      parseDtstartToken(embeddedDtstart[0]!.replace(/^;/, ''), result);
+      parseDtstartToken(embeddedDtstart[0]!.replace(/^;/, ''), result, dateTzid);
       const before = rule.slice(0, embeddedDtstart.index).replace(/;$/, '');
       const after = rule.slice(embeddedDtstart.index + embeddedDtstart[0]!.length).replace(/^;/, '');
       rule = [before, after].filter(Boolean).join(';');
@@ -164,9 +171,13 @@ export function parseRuleString(input: string): Partial<Options> {
         case 'COUNT':
           result.count = parseInteger(rawValue, 'COUNT');
           break;
-        case 'UNTIL':
-          result.until = parseCompactDateTime(rawValue, result.tzid ?? undefined);
+        case 'UNTIL': {
+          const plainDate = plainDateFromCompact(rawValue);
+          result.until = parseCompactDateTime(rawValue, result.tzid ?? (plainDate ? dateTzid : undefined));
+          if (plainDate) result.untilDate = plainDate;
+          else delete result.untilDate;
           break;
+        }
         case 'BYMONTH':
           result.bymonth = rawValue.split(',').map(parseByMonthToken);
           break;

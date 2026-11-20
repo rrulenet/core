@@ -63,8 +63,10 @@ before conversion, rather than silently changing a selector.
 
 ## Search completeness
 
-Calendar-clock queries detect unreachable subdaily clock phases without moving
-DTSTART or relaxing filters. A proven impossible phase produces an empty result.
+Calendar-clock queries detect unreachable subdaily clock phases and can prove
+that no eligible year can satisfy a Gregorian YEARLY rule. The yearly check
+follows INTERVAL and considers the number of candidates available to BYSETPOS.
+A proven impossible rule produces an empty result.
 If the calendar search exhausts its candidate budget without establishing
 completeness, it throws `RecurrenceSearchLimitError` (exported from the package
 root and `/engine`), with code `RECURRENCE_SEARCH_LIMIT`. Do not interpret that

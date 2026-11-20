@@ -83,12 +83,41 @@ test('generated finite streams and directional set queries match primitive set a
       const hours = value => Number((value.epochNanoseconds - start.epochNanoseconds) / 3_600_000_000_000n);
       assert.deepEqual([...engine.iterate()].map(hours), expected, `${kind} trial ${trial}`);
       const bound = random(45);
+      const upper = random(45);
       for (const inclusive of [false, true]) {
-        const next = engine.after(start.add({ hours: bound }), inclusive);
-        const previous = engine.before(start.add({ hours: bound }), inclusive);
+        const after = start.add({ hours: bound });
+        const before = start.add({ hours: upper });
+        const next = engine.after(after, inclusive);
+        const previous = engine.before(after, inclusive);
         assert.equal(next ? hours(next) : null, expected.find(value => inclusive ? value >= bound : value > bound) ?? null);
         assert.equal(previous ? hours(previous) : null, expected.filter(value => inclusive ? value <= bound : value < bound).at(-1) ?? null);
+        const fromBound = expected.filter(value => inclusive ? value >= bound : value > bound);
+        assert.deepEqual([...engine.iterateWindow({ after, inc: inclusive })].map(hours), fromBound);
+        assert.deepEqual([...engine.iterateWindow({ after, before, inc: inclusive })].map(hours),
+          fromBound.filter(value => inclusive ? value <= upper : value < upper));
       }
     }
   }
+});
+
+test('window iterators close both sides of a difference when the consumer stops', () => {
+  const closed = [];
+  const from = instant('2026-01-01T00:00:00Z');
+  const before = from.add({ hours: 48 });
+  const branch = (label, minute) => source({
+    *iterateWindow(window, budget) {
+      try {
+        const values = new ElapsedSource({ start: from.add({ minutes: minute }), every: 'PT1H' });
+        yield* values.iterateWindow(window, budget);
+      } finally {
+        closed.push(label);
+      }
+    },
+  });
+  const engine = new SetEngine({ kind: 'difference', include: branch('include', 0), exclude: branch('exclude', 30) }, 2);
+  for (const value of engine.iterateWindow({ after: from, before, inc: true })) {
+    assert.equal(value.epochNanoseconds, from.epochNanoseconds);
+    break;
+  }
+  assert.deepEqual(closed.sort(), ['exclude', 'include']);
 });
